@@ -8,8 +8,8 @@ const publicSans = Public_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Voice Support Assistant",
-  description: "Stage 1 foundation for a voice-first ecommerce support assistant.",
+  title: "Shop Talk",
+  description: "Voice-first support for orders, returns, and policy questions.",
 };
 
 const RootLayout = ({

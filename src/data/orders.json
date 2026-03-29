@@ -1,0 +1,60 @@
+[
+  {
+    "order_id": "ORD123",
+    "user_id": "U1",
+    "status": "delivered",
+    "item": "Wireless Headphones",
+    "order_date": "2026-03-16",
+    "delivery_date": "2026-03-20",
+    "return_window_days": 7,
+    "refund_status": "none"
+  },
+  {
+    "order_id": "ORD124",
+    "user_id": "U1",
+    "status": "in_transit",
+    "item": "Running Shoes",
+    "order_date": "2026-03-24",
+    "expected_delivery": "2026-03-30",
+    "refund_status": "none"
+  },
+  {
+    "order_id": "ORD126",
+    "user_id": "U1",
+    "status": "delivered",
+    "item": "Coffee Grinder",
+    "order_date": "2026-03-10",
+    "delivery_date": "2026-03-15",
+    "return_window_days": 7,
+    "refund_status": "none"
+  },
+  {
+    "order_id": "ORD127",
+    "user_id": "U1",
+    "status": "cancelled",
+    "item": "Travel Backpack",
+    "order_date": "2026-03-21",
+    "cancellation_date": "2026-03-22",
+    "refund_status": "completed"
+  },
+  {
+    "order_id": "ORD128",
+    "user_id": "U1",
+    "status": "delivered",
+    "item": "Cotton Shirt",
+    "order_date": "2026-03-19",
+    "delivery_date": "2026-03-24",
+    "return_window_days": 7,
+    "refund_status": "processing"
+  },
+  {
+    "order_id": "ORD125",
+    "user_id": "U2",
+    "status": "delivered",
+    "item": "Smart Watch",
+    "order_date": "2026-03-05",
+    "delivery_date": "2026-03-10",
+    "return_window_days": 7,
+    "refund_status": "none"
+  }
+]
