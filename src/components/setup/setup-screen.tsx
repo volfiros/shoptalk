@@ -16,21 +16,11 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { useSessionValue } from "@/hooks/use-session-value";
-import { GEMINI_API_KEY_STORAGE_KEY } from "@/lib/session";
-
-const validateApiKey = (value: string) => {
-  const trimmedValue = value.trim();
-
-  if (!trimmedValue) {
-    return "Enter a Gemini API key to continue.";
-  }
-
-  if (trimmedValue.length < 20) {
-    return "Enter a full API key. The current value looks too short.";
-  }
-
-  return null;
-};
+import {
+  GEMINI_API_KEY_STORAGE_KEY,
+  getGeminiValidationErrorMessage,
+  validateGeminiApiKey
+} from "@/lib/session";
 
 export const SetupScreen = () => {
   const router = useRouter();
@@ -56,7 +46,7 @@ export const SetupScreen = () => {
     event.preventDefault();
 
     const nextKey = (draftKey || value || "").trim();
-    const nextError = validateApiKey(nextKey);
+    const nextError = validateGeminiApiKey(nextKey);
 
     setError(nextError);
 
@@ -78,11 +68,7 @@ export const SetupScreen = () => {
 
         if (!response.ok) {
           const payload = (await response.json()) as { error?: string };
-          throw new Error(
-            payload.error === "invalid_api_key"
-              ? "The Gemini key could not be validated."
-              : "The Gemini key could not be checked right now."
-          );
+          throw new Error(getGeminiValidationErrorMessage(payload.error));
         }
 
         setValue(nextKey);
@@ -94,7 +80,7 @@ export const SetupScreen = () => {
         setError(
           submissionError instanceof Error
             ? submissionError.message
-            : "The Gemini key could not be checked right now."
+            : getGeminiValidationErrorMessage()
         );
         setIsSubmitting(false);
       }

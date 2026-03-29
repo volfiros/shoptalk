@@ -11,11 +11,21 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useLiveSession } from "@/hooks/use-live-session";
 import { useSessionValue } from "@/hooks/use-session-value";
-import { GEMINI_API_KEY_STORAGE_KEY } from "@/lib/session";
+import {
+  GEMINI_API_KEY_STORAGE_KEY,
+  getGeminiValidationErrorMessage,
+  validateGeminiApiKey
+} from "@/lib/session";
 
 type ChatScreenProps = {
   orderCount: number;
 };
+
+const EMPTY_PROMPTS = [
+  "Where is my order?",
+  "Can I return the headphones from my last purchase?",
+  "What is the refund policy?"
+] as const;
 
 export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
   const router = useRouter();
@@ -61,6 +71,16 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
     voiceState === "connecting" ||
     voiceState === "listening" ||
     voiceState === "assistant-responding";
+  const statusCopy =
+    voiceState === "connecting"
+      ? "Connecting the live session."
+      : voiceState === "listening"
+        ? "Listening now. Stop when you finish speaking."
+        : voiceState === "assistant-responding"
+          ? "Assistant is responding. The mic stays disabled until the turn completes."
+          : voiceState === "error"
+            ? "The session needs attention before recording can continue."
+            : "Ready for another turn.";
 
   useEffect(() => {
     if (ready && !value) {
@@ -109,13 +129,13 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
   const saveApiKey = async () => {
     const nextKey = draftApiKey.trim();
 
-    if (!nextKey) {
-      setSettingsError("Enter a Gemini API key to save it.");
-      return;
-    }
+    const nextError = validateGeminiApiKey(
+      nextKey,
+      "Enter a Gemini API key to save it."
+    );
 
-    if (nextKey.length < 20) {
-      setSettingsError("Enter a full API key. The current value looks too short.");
+    if (nextError) {
+      setSettingsError(nextError);
       return;
     }
 
@@ -133,11 +153,7 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
 
       if (!response.ok) {
         const payload = (await response.json()) as { error?: string };
-        throw new Error(
-          payload.error === "invalid_api_key"
-            ? "The Gemini key could not be validated."
-            : "The Gemini key could not be checked right now."
-        );
+        throw new Error(getGeminiValidationErrorMessage(payload.error));
       }
 
       setValue(nextKey);
@@ -146,7 +162,7 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
       setSettingsError(
         saveError instanceof Error
           ? saveError.message
-          : "The Gemini key could not be checked right now."
+          : getGeminiValidationErrorMessage()
       );
     } finally {
       setIsSavingKey(false);
@@ -209,14 +225,7 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
                   size="icon-sm"
                   aria-label="Open chat settings"
                   title="Settings"
-                  onClick={() => {
-                    if (isSettingsOpen) {
-                      closeSettings();
-                      return;
-                    }
-
-                    openSettings();
-                  }}
+                  onClick={isSettingsOpen ? closeSettings : openSettings}
                 >
                   <Settings2 />
                 </Button>
@@ -327,11 +336,7 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
                   <div className="w-full max-w-md rounded-2xl border border-border bg-surface px-6 py-6 text-center shadow-[0_8px_24px_rgba(54,46,31,0.06)]">
                     <p className="text-base font-medium text-foreground">Try a prompt</p>
                     <div className="mt-4 flex flex-col gap-2 text-left">
-                      {[
-                        "Where is my order?",
-                        "Can I return the headphones from my last purchase?",
-                        "What is the refund policy?"
-                      ].map((prompt) => (
+                      {EMPTY_PROMPTS.map((prompt) => (
                         <div
                           key={prompt}
                           className="rounded-lg border border-border bg-background px-4 py-3 text-sm leading-6 text-muted-foreground"
@@ -382,15 +387,7 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
                   </select>
                 </div>
                 <div className="rounded-lg border border-border bg-background px-3 py-3 text-sm text-muted-foreground">
-                  {voiceState === "connecting"
-                    ? "Connecting the live session."
-                    : voiceState === "listening"
-                      ? "Listening now. Stop when you finish speaking."
-                      : voiceState === "assistant-responding"
-                        ? "Assistant is responding. The mic stays disabled until the turn completes."
-                        : voiceState === "error"
-                          ? "The session needs attention before recording can continue."
-                          : "Ready for another turn."}
+                  {statusCopy}
                 </div>
               </div>
               {voiceState === "listening" ? (

@@ -18,7 +18,6 @@ type VoiceState =
 type ChatMessage = {
   id: string;
   role: "user" | "assistant";
-  title: string;
   body: string;
   isDraft?: boolean;
 };
@@ -263,7 +262,6 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
 
   const upsertDraftMessage = useCallback((
     role: "user" | "assistant",
-    title: string,
     text: string,
     options?: {
       finished?: boolean;
@@ -286,7 +284,6 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       const nextMessage: ChatMessage = {
         id: targetId,
         role,
-        title,
         body:
           existingIndex !== -1 && mode === "merge-transcript"
             ? mergeTranscriptText(currentMessages[existingIndex].body, text)
@@ -664,7 +661,6 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
 
                 upsertDraftMessage(
                   "user",
-                  "You",
                   inputText,
                   {
                     mode: "merge-transcript"
@@ -681,7 +677,6 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
                 setVoiceState("assistant-responding");
                 upsertDraftMessage(
                   "assistant",
-                  "Assistant",
                   message.serverContent.outputTranscription.text,
                   {
                     mode: "merge-transcript"
@@ -862,23 +857,17 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
         shouldSendAudioStreamEndRef.current &&
         isSessionWritable(sessionRef.current)
       ) {
-        if (
-          sessionRef.current &&
-          shouldSendAudioStreamEndRef.current &&
-          isSessionWritable(sessionRef.current)
-        ) {
-          try {
-            sessionRef.current.sendRealtimeInput({
-              audioStreamEnd: true
-            });
-          } catch (error) {
-            void shutdownLiveSession(
-              error instanceof Error
-                ? error.message
-                : "Audio streaming could not stop cleanly."
-            );
-            return;
-          }
+        try {
+          sessionRef.current.sendRealtimeInput({
+            audioStreamEnd: true
+          });
+        } catch (error) {
+          void shutdownLiveSession(
+            error instanceof Error
+              ? error.message
+              : "Audio streaming could not stop cleanly."
+          );
+          return;
         }
 
         if (stoppedByUserRef.current) {
