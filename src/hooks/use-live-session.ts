@@ -1,7 +1,7 @@
 "use client";
 
 import { GoogleGenAI, type LiveServerMessage } from "@google/genai";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   LIVE_MODEL,
   LIVE_SESSION_CONFIG,
@@ -111,6 +111,8 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   const playbackCursorRef = useRef(0);
   const activePlaybackCountRef = useRef(0);
   const turnCompletePendingRef = useRef(false);
+  const sessionIsOpenRef = useRef(false);
+  const shouldSendAudioStreamEndRef = useRef(true);
 
   const upsertDraftMessage = (
     role: "user" | "assistant",
@@ -199,6 +201,62 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
 
     return audioContext;
   };
+
+  const closeAudioOutput = useCallback(async () => {
+    activePlaybackCountRef.current = 0;
+    playbackCursorRef.current = 0;
+    turnCompletePendingRef.current = false;
+
+    const audioContext = audioContextRef.current;
+    audioContextRef.current = null;
+
+    if (audioContext && audioContext.state !== "closed") {
+      await audioContext.close();
+    }
+  }, []);
+
+  const shutdownLiveSession = useCallback(
+    async (
+      nextErrorMessage?: string,
+      options?: {
+        keepClosedSession?: boolean;
+      }
+    ) => {
+      sessionIsOpenRef.current = false;
+      shouldSendAudioStreamEndRef.current = false;
+
+      if (mediaRecorderRef.current) {
+        if (mediaRecorderRef.current.state !== "inactive") {
+          mediaRecorderRef.current.stop();
+        } else {
+          stopMediaStream();
+        }
+      } else {
+        stopMediaStream();
+      }
+
+      const session = sessionRef.current;
+
+      if (!options?.keepClosedSession) {
+        sessionRef.current = null;
+      }
+
+      if (session && !options?.keepClosedSession) {
+        session.close();
+      }
+
+      await closeAudioOutput();
+
+      activeAssistantMessageIdRef.current = null;
+      activeUserMessageIdRef.current = null;
+
+      if (nextErrorMessage) {
+        setErrorMessage(nextErrorMessage);
+        setVoiceState("error");
+      }
+    },
+    [closeAudioOutput]
+  );
 
   const queueAssistantAudio = useEffectEvent(async (base64Audio: string) => {
     const audioContext = await ensureAudioContext();
@@ -353,12 +411,11 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
               if (message.data) {
                 setVoiceState("assistant-responding");
                 void queueAssistantAudio(message.data).catch((error) => {
-                  setErrorMessage(
+                  void shutdownLiveSession(
                     error instanceof Error
                       ? error.message
                       : "Audio playback could not start."
                   );
-                  setVoiceState("error");
                 });
               }
 
@@ -388,13 +445,14 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
             },
             onerror: () => {
               if (!cancelled) {
-                setErrorMessage("The live session hit an error.");
-                setVoiceState("error");
+                void shutdownLiveSession("The live session hit an error.");
               }
             },
             onclose: () => {
               if (!cancelled) {
-                setVoiceState("error");
+                void shutdownLiveSession("The live session closed.", {
+                  keepClosedSession: true
+                });
               }
             }
           }
@@ -406,14 +464,15 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
         }
 
         sessionRef.current = session;
+        sessionIsOpenRef.current = true;
+        shouldSendAudioStreamEndRef.current = true;
       } catch (error) {
         if (!cancelled) {
-          setErrorMessage(
+          void shutdownLiveSession(
             error instanceof Error
               ? error.message
               : "Unable to connect the live session."
           );
-          setVoiceState("error");
         }
       }
     };
@@ -422,16 +481,9 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
 
     return () => {
       cancelled = true;
-      stopMediaStream();
-      turnCompletePendingRef.current = false;
-      sessionRef.current?.close();
-      sessionRef.current = null;
-      void audioContextRef.current?.close();
-      audioContextRef.current = null;
-      playbackCursorRef.current = 0;
-      activePlaybackCountRef.current = 0;
+      void shutdownLiveSession();
     };
-  }, [apiKey]);
+  }, [apiKey, shutdownLiveSession]);
 
   const startListening = async () => {
     if (!sessionRef.current || voiceState !== "idle") {
@@ -460,22 +512,48 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       setVoiceState("listening");
 
       mediaRecorder.addEventListener("dataavailable", async (event) => {
-        if (!event.data.size || !sessionRef.current) {
+        const session = sessionRef.current;
+
+        if (!event.data.size || !session || !sessionIsOpenRef.current) {
           return;
         }
 
-        const audioChunk = await browserBlobToSdkBlob(event.data);
+        try {
+          const audioChunk = await browserBlobToSdkBlob(event.data);
 
-        sessionRef.current.sendRealtimeInput({
-          audio: audioChunk
-        });
+          if (!sessionIsOpenRef.current || sessionRef.current !== session) {
+            return;
+          }
+
+          session.sendRealtimeInput({
+            audio: audioChunk
+          });
+        } catch (error) {
+          void shutdownLiveSession(
+            error instanceof Error
+              ? error.message
+              : "Audio streaming could not continue."
+          );
+        }
       });
 
       mediaRecorder.addEventListener("stop", () => {
         stopMediaStream();
-        sessionRef.current?.sendRealtimeInput({
-          audioStreamEnd: true
-        });
+
+        if (sessionRef.current && sessionIsOpenRef.current && shouldSendAudioStreamEndRef.current) {
+          try {
+            sessionRef.current.sendRealtimeInput({
+              audioStreamEnd: true
+            });
+          } catch (error) {
+            void shutdownLiveSession(
+              error instanceof Error
+                ? error.message
+                : "Audio streaming could not stop cleanly."
+            );
+            return;
+          }
+        }
 
         if (stoppedByUserRef.current) {
           setVoiceState("assistant-responding");
@@ -484,13 +562,11 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
 
       mediaRecorder.start(250);
     } catch (error) {
-      stopMediaStream();
-      setErrorMessage(
+      void shutdownLiveSession(
         error instanceof Error
           ? error.message
           : "Microphone access could not be started."
       );
-      setVoiceState("error");
     }
   };
 
