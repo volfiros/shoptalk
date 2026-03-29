@@ -1,8 +1,12 @@
 "use client";
 
-import { GoogleGenAI, type LiveServerMessage, Modality } from "@google/genai";
-import { useEffect, useRef, useState } from "react";
-import { LIVE_MODEL, LIVE_VOICE } from "@/lib/live/config";
+import { GoogleGenAI, type LiveServerMessage } from "@google/genai";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+import {
+  LIVE_MODEL,
+  LIVE_SESSION_CONFIG,
+  LIVE_VOICE
+} from "@/lib/live/config";
 
 type VoiceState =
   | "connecting"
@@ -64,6 +68,23 @@ const browserBlobToSdkBlob = async (blob: Blob) => {
   };
 };
 
+const decodeBase64ToBytes = (base64: string) => {
+  const binary = window.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes;
+};
+
+type BrowserAudioContext = AudioContext;
+
+type WindowWithAudioContext = Window & {
+  webkitAudioContext?: typeof AudioContext;
+};
+
 export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   const [voiceState, setVoiceState] = useState<VoiceState>("connecting");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -86,6 +107,10 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   const activeUserMessageIdRef = useRef<string | null>(null);
   const activeAssistantMessageIdRef = useRef<string | null>(null);
   const stoppedByUserRef = useRef(false);
+  const audioContextRef = useRef<BrowserAudioContext | null>(null);
+  const playbackCursorRef = useRef(0);
+  const activePlaybackCountRef = useRef(0);
+  const turnCompletePendingRef = useRef(false);
 
   const upsertDraftMessage = (
     role: "user" | "assistant",
@@ -133,6 +158,132 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     mediaStreamRef.current = null;
   };
 
+  const finishAssistantTurn = useEffectEvent(() => {
+    if (activePlaybackCountRef.current > 0 || mediaRecorderRef.current) {
+      return;
+    }
+
+    activeAssistantMessageIdRef.current = null;
+    activeUserMessageIdRef.current = null;
+    turnCompletePendingRef.current = false;
+    setVoiceState("idle");
+  });
+
+  const ensureAudioContext = async () => {
+    if (audioContextRef.current) {
+      if (audioContextRef.current.state === "suspended") {
+        await audioContextRef.current.resume();
+      }
+
+      return audioContextRef.current;
+    }
+
+    const AudioContextConstructor =
+      window.AudioContext ??
+      (window as WindowWithAudioContext).webkitAudioContext;
+
+    if (!AudioContextConstructor) {
+      throw new Error("Audio playback is not supported in this browser.");
+    }
+
+    const audioContext = new AudioContextConstructor({
+      sampleRate: 24_000
+    });
+
+    if (audioContext.state === "suspended") {
+      await audioContext.resume();
+    }
+
+    audioContextRef.current = audioContext;
+    playbackCursorRef.current = audioContext.currentTime;
+
+    return audioContext;
+  };
+
+  const queueAssistantAudio = useEffectEvent(async (base64Audio: string) => {
+    const audioContext = await ensureAudioContext();
+    const bytes = decodeBase64ToBytes(base64Audio);
+    const pcm16 = new Int16Array(
+      bytes.buffer,
+      bytes.byteOffset,
+      Math.floor(bytes.byteLength / 2)
+    );
+    const float32 = new Float32Array(pcm16.length);
+
+    pcm16.forEach((sample, index) => {
+      float32[index] = sample / 32768;
+    });
+
+    const audioBuffer = audioContext.createBuffer(1, float32.length, 24_000);
+    audioBuffer.copyToChannel(float32, 0);
+
+    const source = audioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(audioContext.destination);
+
+    const startAt = Math.max(playbackCursorRef.current, audioContext.currentTime);
+    playbackCursorRef.current = startAt + audioBuffer.duration;
+    activePlaybackCountRef.current += 1;
+
+    source.addEventListener("ended", () => {
+      activePlaybackCountRef.current = Math.max(0, activePlaybackCountRef.current - 1);
+
+      if (turnCompletePendingRef.current) {
+        finishAssistantTurn();
+      }
+    });
+
+    source.start(startAt);
+  });
+
+  const handleToolCall = useEffectEvent(async (
+    toolCall: NonNullable<LiveServerMessage["toolCall"]>
+  ) => {
+    const functionCalls = toolCall.functionCalls ?? [];
+
+    if (!functionCalls.length || !sessionRef.current) {
+      return;
+    }
+
+    const functionResponses = await Promise.all(
+      functionCalls.map(async (functionCall) => {
+        const response = await fetch("/api/support/tool", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            toolName: functionCall.name,
+            args: functionCall.args ?? {}
+          })
+        });
+
+        const payload = (await response.json()) as {
+          error?: string;
+          result?: unknown;
+        };
+
+        return {
+          id: functionCall.id,
+          name: functionCall.name,
+          response: response.ok
+            ? {
+                ok: true,
+                result: payload.result
+              }
+            : {
+                ok: false,
+                error: payload.error ?? "tool_failed"
+              }
+        };
+      })
+    );
+
+    sessionRef.current.sendToolResponse({
+      functionResponses
+    });
+  });
+
   useEffect(() => {
     if (!apiKey) {
       return;
@@ -172,11 +323,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
 
         const session = await ai.live.connect({
           model: payload.model,
-          config: {
-            responseModalities: [Modality.AUDIO],
-            inputAudioTranscription: {},
-            outputAudioTranscription: {}
-          },
+          config: LIVE_SESSION_CONFIG,
           callbacks: {
             onopen: () => {
               if (!cancelled) {
@@ -195,6 +342,24 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
                   voice: payload.voice
                 });
                 return;
+              }
+
+              if (message.toolCall) {
+                setVoiceState("assistant-responding");
+                void handleToolCall(message.toolCall);
+                return;
+              }
+
+              if (message.data) {
+                setVoiceState("assistant-responding");
+                void queueAssistantAudio(message.data).catch((error) => {
+                  setErrorMessage(
+                    error instanceof Error
+                      ? error.message
+                      : "Audio playback could not start."
+                  );
+                  setVoiceState("error");
+                });
               }
 
               if (message.serverContent?.inputTranscription?.text) {
@@ -217,9 +382,8 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
               }
 
               if (message.serverContent?.turnComplete) {
-                activeAssistantMessageIdRef.current = null;
-                activeUserMessageIdRef.current = null;
-                setVoiceState("idle");
+                turnCompletePendingRef.current = true;
+                finishAssistantTurn();
               }
             },
             onerror: () => {
@@ -259,8 +423,13 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     return () => {
       cancelled = true;
       stopMediaStream();
+      turnCompletePendingRef.current = false;
       sessionRef.current?.close();
       sessionRef.current = null;
+      void audioContextRef.current?.close();
+      audioContextRef.current = null;
+      playbackCursorRef.current = 0;
+      activePlaybackCountRef.current = 0;
     };
   }, [apiKey]);
 
@@ -275,6 +444,8 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       if (mimeType === null) {
         throw new Error("Audio recording is not supported in this browser.");
       }
+
+      await ensureAudioContext();
 
       const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(

@@ -63,7 +63,7 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
         <div className="flex flex-1 flex-col gap-4">
           <SurfacePanel
             title="Current session"
-            description={`The current support data includes ${orderCount} orders. Live voice now handles key validation, session setup, microphone capture, and input transcription.`}
+            description={`The current support data includes ${orderCount} orders. Live voice now handles session setup, user speech, assistant audio, and tool-backed answers.`}
           >
             <div
               aria-live="polite"
@@ -88,7 +88,7 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
             ) : null}
           </SurfacePanel>
 
-          <SurfacePanel title="Conversation" description="The transcript timeline stays central to the interface so spoken input and assistant output remain easy to review.">
+          <SurfacePanel title="Conversation" description="The transcript timeline stays central so spoken input and assistant replies stay easy to follow.">
             {messages.length > 0 ? (
               <div className="flex flex-col gap-4">
                 {messages.map((message, index) => (

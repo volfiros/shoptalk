@@ -1,6 +1,6 @@
-import { GoogleGenAI, Modality } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
-import { LIVE_MODEL, LIVE_VOICE } from "@/lib/live/config";
+import { LIVE_MODEL, LIVE_SESSION_CONFIG, LIVE_VOICE } from "@/lib/live/config";
 
 type SessionBody = {
   apiKey?: string;
@@ -39,20 +39,7 @@ export const POST = async (request: Request) => {
         newSessionExpireTime: new Date(Date.now() + 60 * 1000).toISOString(),
         liveConnectConstraints: {
           model: LIVE_MODEL,
-          config: {
-            responseModalities: [Modality.AUDIO],
-            sessionResumption: {},
-            inputAudioTranscription: {},
-            outputAudioTranscription: {},
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: {
-                  voiceName: LIVE_VOICE
-                }
-              }
-            },
-            temperature: 0.4
-          }
+          config: LIVE_SESSION_CONFIG
         },
         httpOptions: {
           apiVersion: "v1alpha"
