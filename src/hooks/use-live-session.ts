@@ -23,6 +23,8 @@ type ChatMessage = {
   isDraft?: boolean;
 };
 
+type MessageUpdateMode = "replace" | "merge-transcript";
+
 type SessionPayload = {
   token: string;
   model: string;
@@ -33,40 +35,35 @@ type UseLiveSessionOptions = {
   apiKey: string | null;
 };
 
+type MicrophoneDevice = {
+  deviceId: string;
+  label: string;
+};
+
+type BrowserAudioContext = AudioContext;
+
+type WindowWithAudioContext = Window & {
+  webkitAudioContext?: typeof AudioContext;
+};
+
+type LiveSessionConnectionState = {
+  conn?: {
+    ws?: {
+      readyState?: number;
+    };
+  };
+};
+
+type ScriptProcessorNodeWithLegacyFactory = ScriptProcessorNode & {
+  connect(destinationNode: AudioNode): void;
+  disconnect(): void;
+};
+
 const createId = () => {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 };
 
-const preferredMimeTypes = [
-  "audio/webm;codecs=opus",
-  "audio/webm",
-  "audio/mp4"
-];
-
-const getRecorderMimeType = () => {
-  if (typeof MediaRecorder === "undefined") {
-    return null;
-  }
-
-  return (
-    preferredMimeTypes.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) ??
-    ""
-  );
-};
-
-const browserBlobToSdkBlob = async (blob: Blob) => {
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  let binary = "";
-
-  bytes.forEach((byte) => {
-    binary += String.fromCharCode(byte);
-  });
-
-  return {
-    data: window.btoa(binary),
-    mimeType: blob.type || "audio/webm"
-  };
-};
+const MICROPHONE_STORAGE_KEY = "shop-talk-microphone-id";
 
 const decodeBase64ToBytes = (base64: string) => {
   const binary = window.atob(base64);
@@ -79,16 +76,69 @@ const decodeBase64ToBytes = (base64: string) => {
   return bytes;
 };
 
-type BrowserAudioContext = AudioContext;
+const downsamplePcm = (
+  input: Float32Array,
+  inputSampleRate: number,
+  outputSampleRate: number
+) => {
+  if (inputSampleRate === outputSampleRate) {
+    return input;
+  }
 
-type WindowWithAudioContext = Window & {
-  webkitAudioContext?: typeof AudioContext;
+  const sampleRateRatio = inputSampleRate / outputSampleRate;
+  const outputLength = Math.round(input.length / sampleRateRatio);
+  const output = new Float32Array(outputLength);
+
+  let outputIndex = 0;
+  let inputIndex = 0;
+
+  while (outputIndex < outputLength) {
+    const nextInputIndex = Math.round((outputIndex + 1) * sampleRateRatio);
+    let total = 0;
+    let sampleCount = 0;
+
+    for (let index = inputIndex; index < nextInputIndex && index < input.length; index += 1) {
+      total += input[index];
+      sampleCount += 1;
+    }
+
+    output[outputIndex] = sampleCount > 0 ? total / sampleCount : 0;
+    outputIndex += 1;
+    inputIndex = nextInputIndex;
+  }
+
+  return output;
+};
+
+const pcmFloat32ToBase64 = (input: Float32Array) => {
+  const bytes = new Uint8Array(input.length * 2);
+
+  for (let index = 0; index < input.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, input[index]));
+    const pcmValue = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+    const clampedValue = Math.round(pcmValue);
+    const byteOffset = index * 2;
+
+    bytes[byteOffset] = clampedValue & 0xff;
+    bytes[byteOffset + 1] = (clampedValue >> 8) & 0xff;
+  }
+
+  let binary = "";
+
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+
+  return window.btoa(binary);
 };
 
 export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   const [voiceState, setVoiceState] = useState<VoiceState>("connecting");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isLoadingMicrophones, setIsLoadingMicrophones] = useState(true);
+  const [microphoneDevices, setMicrophoneDevices] = useState<MicrophoneDevice[]>([]);
+  const [selectedMicrophoneId, setSelectedMicrophoneId] = useState<string>("");
   const [sessionInfo, setSessionInfo] = useState<{
     sessionId: string | null;
     model: string;
@@ -102,8 +152,11 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   const sessionRef = useRef<Awaited<ReturnType<GoogleGenAI["live"]["connect"]>> | null>(
     null
   );
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const inputAudioContextRef = useRef<BrowserAudioContext | null>(null);
+  const inputSourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const inputProcessorNodeRef = useRef<ScriptProcessorNodeWithLegacyFactory | null>(null);
+  const inputSilenceNodeRef = useRef<GainNode | null>(null);
   const activeUserMessageIdRef = useRef<string | null>(null);
   const activeAssistantMessageIdRef = useRef<string | null>(null);
   const stoppedByUserRef = useRef(false);
@@ -113,13 +166,112 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   const turnCompletePendingRef = useRef(false);
   const sessionIsOpenRef = useRef(false);
   const shouldSendAudioStreamEndRef = useRef(true);
+  const shouldResetConversationRef = useRef(false);
+  const shouldIgnoreCurrentTurnRef = useRef(false);
 
-  const upsertDraftMessage = (
+  const persistMicrophoneId = (deviceId: string) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.sessionStorage.setItem(MICROPHONE_STORAGE_KEY, deviceId);
+  };
+
+  const refreshMicrophones = useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) {
+      setIsLoadingMicrophones(false);
+      setMicrophoneDevices([]);
+      return;
+    }
+
+    setIsLoadingMicrophones(true);
+
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const audioInputs = devices.filter((device) => device.kind === "audioinput");
+      const nextDevices = audioInputs.map((device, index) => ({
+        deviceId: device.deviceId,
+        label:
+          device.label.trim().length > 0
+            ? device.label
+            : `Microphone ${index + 1}`
+      }));
+
+      setMicrophoneDevices(nextDevices);
+      setSelectedMicrophoneId((currentValue) => {
+        const storedValue =
+          currentValue ||
+          (typeof window !== "undefined"
+            ? window.sessionStorage.getItem(MICROPHONE_STORAGE_KEY) ?? ""
+            : "");
+
+        const matchedDevice = nextDevices.find(
+          (device) => device.deviceId === storedValue
+        );
+        const fallbackDevice =
+          nextDevices.find((device) => device.deviceId === "default") ??
+          nextDevices[0];
+        const nextValue = matchedDevice?.deviceId ?? fallbackDevice?.deviceId ?? "";
+
+        if (nextValue) {
+          persistMicrophoneId(nextValue);
+        }
+
+        return nextValue;
+      });
+    } finally {
+      setIsLoadingMicrophones(false);
+    }
+  }, []);
+
+  const isSessionWritable = (session: object | null | undefined) => {
+    if (!session || !sessionIsOpenRef.current) {
+      return false;
+    }
+
+    const readyState = (session as LiveSessionConnectionState).conn?.ws?.readyState;
+
+    if (typeof readyState !== "number") {
+      return true;
+    }
+
+    return readyState === WebSocket.OPEN;
+  };
+
+  const resetConversationState = useCallback(() => {
+    activeAssistantMessageIdRef.current = null;
+    activeUserMessageIdRef.current = null;
+    shouldResetConversationRef.current = false;
+    setMessages([]);
+  }, []);
+
+  const mergeTranscriptText = (currentText: string, nextText: string) => {
+    if (!currentText) {
+      return nextText;
+    }
+
+    if (nextText.startsWith(currentText)) {
+      return nextText;
+    }
+
+    if (currentText.endsWith(nextText)) {
+      return currentText;
+    }
+
+    return `${currentText}${nextText}`;
+  };
+
+  const upsertDraftMessage = useCallback((
     role: "user" | "assistant",
     title: string,
     text: string,
-    finished = false
+    options?: {
+      finished?: boolean;
+      mode?: MessageUpdateMode;
+    }
   ) => {
+    const finished = options?.finished ?? false;
+    const mode = options?.mode ?? "replace";
     const targetRef =
       role === "user" ? activeUserMessageIdRef : activeAssistantMessageIdRef;
     const targetId = targetRef.current ?? createId();
@@ -135,7 +287,10 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
         id: targetId,
         role,
         title,
-        body: text,
+        body:
+          existingIndex !== -1 && mode === "merge-transcript"
+            ? mergeTranscriptText(currentMessages[existingIndex].body, text)
+            : text,
         isDraft: !finished
       };
 
@@ -151,23 +306,56 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     if (finished) {
       targetRef.current = null;
     }
-  };
+  }, []);
+
+  const finalizeDraftMessage = useCallback((role: "user" | "assistant") => {
+    const targetRef =
+      role === "user" ? activeUserMessageIdRef : activeAssistantMessageIdRef;
+    const targetId = targetRef.current;
+
+    if (!targetId) {
+      return;
+    }
+
+    setMessages((currentMessages) =>
+      currentMessages.map((message) =>
+        message.id === targetId
+          ? {
+              ...message,
+              isDraft: false
+            }
+          : message
+      )
+    );
+
+    targetRef.current = null;
+  }, []);
 
   const stopMediaStream = () => {
-    mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop());
-    mediaRecorderRef.current = null;
+    inputProcessorNodeRef.current?.disconnect();
+    inputProcessorNodeRef.current = null;
+    inputSourceNodeRef.current?.disconnect();
+    inputSourceNodeRef.current = null;
+    inputSilenceNodeRef.current?.disconnect();
+    inputSilenceNodeRef.current = null;
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     mediaStreamRef.current = null;
   };
 
   const finishAssistantTurn = useEffectEvent(() => {
-    if (activePlaybackCountRef.current > 0 || mediaRecorderRef.current) {
+    if (activePlaybackCountRef.current > 0 || inputProcessorNodeRef.current) {
       return;
     }
 
-    activeAssistantMessageIdRef.current = null;
-    activeUserMessageIdRef.current = null;
     turnCompletePendingRef.current = false;
+
+    if (shouldResetConversationRef.current) {
+      resetConversationState();
+    } else {
+      activeAssistantMessageIdRef.current = null;
+      activeUserMessageIdRef.current = null;
+    }
+
     setVoiceState("idle");
   });
 
@@ -215,6 +403,17 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     }
   }, []);
 
+  const closeAudioInput = useCallback(async () => {
+    stopMediaStream();
+
+    const inputAudioContext = inputAudioContextRef.current;
+    inputAudioContextRef.current = null;
+
+    if (inputAudioContext && inputAudioContext.state !== "closed") {
+      await inputAudioContext.close();
+    }
+  }, []);
+
   const shutdownLiveSession = useCallback(
     async (
       nextErrorMessage?: string,
@@ -225,15 +424,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       sessionIsOpenRef.current = false;
       shouldSendAudioStreamEndRef.current = false;
 
-      if (mediaRecorderRef.current) {
-        if (mediaRecorderRef.current.state !== "inactive") {
-          mediaRecorderRef.current.stop();
-        } else {
-          stopMediaStream();
-        }
-      } else {
-        stopMediaStream();
-      }
+      await closeAudioInput();
 
       const session = sessionRef.current;
 
@@ -249,14 +440,34 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
 
       activeAssistantMessageIdRef.current = null;
       activeUserMessageIdRef.current = null;
+      shouldResetConversationRef.current = false;
+      shouldIgnoreCurrentTurnRef.current = false;
 
       if (nextErrorMessage) {
         setErrorMessage(nextErrorMessage);
         setVoiceState("error");
       }
     },
-    [closeAudioOutput]
+    [closeAudioInput, closeAudioOutput]
   );
+
+  useEffect(() => {
+    void refreshMicrophones();
+
+    if (typeof navigator === "undefined" || !navigator.mediaDevices) {
+      return;
+    }
+
+    const handleDeviceChange = () => {
+      void refreshMicrophones();
+    };
+
+    navigator.mediaDevices.addEventListener("devicechange", handleDeviceChange);
+
+    return () => {
+      navigator.mediaDevices.removeEventListener("devicechange", handleDeviceChange);
+    };
+  }, [refreshMicrophones]);
 
   const queueAssistantAudio = useEffectEvent(async (base64Audio: string) => {
     const audioContext = await ensureAudioContext();
@@ -298,8 +509,9 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     toolCall: NonNullable<LiveServerMessage["toolCall"]>
   ) => {
     const functionCalls = toolCall.functionCalls ?? [];
+    const session = sessionRef.current;
 
-    if (!functionCalls.length || !sessionRef.current) {
+    if (!functionCalls.length || !session || !isSessionWritable(session)) {
       return;
     }
 
@@ -337,9 +549,21 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       })
     );
 
-    sessionRef.current.sendToolResponse({
-      functionResponses
-    });
+    if (sessionRef.current !== session || !isSessionWritable(session)) {
+      return;
+    }
+
+    try {
+      session.sendToolResponse({
+        functionResponses
+      });
+    } catch (error) {
+      void shutdownLiveSession(
+        error instanceof Error
+          ? error.message
+          : "Tool responses could not be sent."
+      );
+    }
   });
 
   useEffect(() => {
@@ -385,11 +609,22 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
           callbacks: {
             onopen: () => {
               if (!cancelled) {
+                sessionIsOpenRef.current = true;
                 setVoiceState("idle");
               }
             },
             onmessage: (message: LiveServerMessage) => {
               if (cancelled) {
+                return;
+              }
+
+              if (shouldIgnoreCurrentTurnRef.current) {
+                if (message.serverContent?.turnComplete) {
+                  shouldIgnoreCurrentTurnRef.current = false;
+                  activeAssistantMessageIdRef.current = null;
+                  activeUserMessageIdRef.current = null;
+                }
+
                 return;
               }
 
@@ -403,12 +638,14 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
               }
 
               if (message.toolCall) {
+                finalizeDraftMessage("user");
                 setVoiceState("assistant-responding");
                 void handleToolCall(message.toolCall);
                 return;
               }
 
               if (message.data) {
+                finalizeDraftMessage("user");
                 setVoiceState("assistant-responding");
                 void queueAssistantAudio(message.data).catch((error) => {
                   void shutdownLiveSession(
@@ -420,25 +657,44 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
               }
 
               if (message.serverContent?.inputTranscription?.text) {
+                const inputText = message.serverContent.inputTranscription.text;
+                const inputFinished = Boolean(
+                  message.serverContent.inputTranscription.finished
+                );
+
                 upsertDraftMessage(
                   "user",
                   "You",
-                  message.serverContent.inputTranscription.text,
-                  Boolean(message.serverContent.inputTranscription.finished)
+                  inputText,
+                  {
+                    mode: "merge-transcript"
+                  }
                 );
+
+                if (inputFinished) {
+                  finalizeDraftMessage("user");
+                }
               }
 
               if (message.serverContent?.outputTranscription?.text) {
+                finalizeDraftMessage("user");
                 setVoiceState("assistant-responding");
                 upsertDraftMessage(
                   "assistant",
                   "Assistant",
                   message.serverContent.outputTranscription.text,
-                  Boolean(message.serverContent.outputTranscription.finished)
+                  {
+                    mode: "merge-transcript"
+                  }
                 );
+
+                if (Boolean(message.serverContent.outputTranscription.finished)) {
+                  finalizeDraftMessage("assistant");
+                }
               }
 
               if (message.serverContent?.turnComplete) {
+                finalizeDraftMessage("assistant");
                 turnCompletePendingRef.current = true;
                 finishAssistantTurn();
               }
@@ -450,6 +706,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
             },
             onclose: () => {
               if (!cancelled) {
+                sessionIsOpenRef.current = false;
                 void shutdownLiveSession("The live session closed.", {
                   keepClosedSession: true
                 });
@@ -483,7 +740,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       cancelled = true;
       void shutdownLiveSession();
     };
-  }, [apiKey, shutdownLiveSession]);
+  }, [apiKey, finalizeDraftMessage, shutdownLiveSession, upsertDraftMessage]);
 
   const startListening = async () => {
     if (!sessionRef.current || voiceState !== "idle") {
@@ -491,42 +748,82 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     }
 
     try {
-      const mimeType = getRecorderMimeType();
+      let mediaStream: MediaStream;
 
-      if (mimeType === null) {
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio:
+            selectedMicrophoneId && selectedMicrophoneId !== "default"
+              ? {
+                  deviceId: {
+                    exact: selectedMicrophoneId
+                  }
+                }
+              : true
+        });
+      } catch (error) {
+        if (selectedMicrophoneId && selectedMicrophoneId !== "default") {
+          mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          setErrorMessage("Selected microphone was unavailable. Switched to the default input.");
+          setSelectedMicrophoneId("default");
+          persistMicrophoneId("default");
+        } else {
+          throw error;
+        }
+      }
+
+      void refreshMicrophones();
+      const AudioContextConstructor =
+        window.AudioContext ??
+        (window as WindowWithAudioContext).webkitAudioContext;
+
+      if (!AudioContextConstructor) {
         throw new Error("Audio recording is not supported in this browser.");
       }
 
-      await ensureAudioContext();
-
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(
-        mediaStream,
-        mimeType ? { mimeType } : undefined
-      );
+      const inputAudioContext = new AudioContextConstructor();
+      const inputSourceNode = inputAudioContext.createMediaStreamSource(mediaStream);
+      const inputProcessorNode = inputAudioContext.createScriptProcessor(
+        4096,
+        1,
+        1
+      ) as ScriptProcessorNodeWithLegacyFactory;
+      const inputSilenceNode = inputAudioContext.createGain();
+      inputSilenceNode.gain.value = 0;
 
       stoppedByUserRef.current = false;
       mediaStreamRef.current = mediaStream;
-      mediaRecorderRef.current = mediaRecorder;
+      inputAudioContextRef.current = inputAudioContext;
+      inputSourceNodeRef.current = inputSourceNode;
+      inputProcessorNodeRef.current = inputProcessorNode;
+      inputSilenceNodeRef.current = inputSilenceNode;
       setErrorMessage(null);
       setVoiceState("listening");
 
-      mediaRecorder.addEventListener("dataavailable", async (event) => {
+      inputProcessorNode.onaudioprocess = (event) => {
         const session = sessionRef.current;
 
-        if (!event.data.size || !session || !sessionIsOpenRef.current) {
+        if (!session || !isSessionWritable(session)) {
           return;
         }
 
         try {
-          const audioChunk = await browserBlobToSdkBlob(event.data);
+          const channelData = event.inputBuffer.getChannelData(0);
+          const downsampledAudio = downsamplePcm(
+            channelData,
+            inputAudioContext.sampleRate,
+            16_000
+          );
 
-          if (!sessionIsOpenRef.current || sessionRef.current !== session) {
+          if (sessionRef.current !== session || !isSessionWritable(session)) {
             return;
           }
 
           session.sendRealtimeInput({
-            audio: audioChunk
+            audio: {
+              data: pcmFloat32ToBase64(downsampledAudio),
+              mimeType: "audio/pcm;rate=16000"
+            }
           });
         } catch (error) {
           void shutdownLiveSession(
@@ -535,12 +832,41 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
               : "Audio streaming could not continue."
           );
         }
-      });
+      };
 
-      mediaRecorder.addEventListener("stop", () => {
-        stopMediaStream();
+      inputSourceNode.connect(inputProcessorNode);
+      inputProcessorNode.connect(inputSilenceNode);
+      inputSilenceNode.connect(inputAudioContext.destination);
 
-        if (sessionRef.current && sessionIsOpenRef.current && shouldSendAudioStreamEndRef.current) {
+      if (inputAudioContext.state === "suspended") {
+        void inputAudioContext.resume();
+      }
+    } catch (error) {
+      void shutdownLiveSession(
+        error instanceof Error
+          ? error.message
+          : "Microphone access could not be started."
+      );
+    }
+  };
+
+  const stopListening = () => {
+    if (!inputProcessorNodeRef.current || voiceState !== "listening") {
+      return;
+    }
+
+    stoppedByUserRef.current = true;
+    void closeAudioInput().then(() => {
+      if (
+        sessionRef.current &&
+        shouldSendAudioStreamEndRef.current &&
+        isSessionWritable(sessionRef.current)
+      ) {
+        if (
+          sessionRef.current &&
+          shouldSendAudioStreamEndRef.current &&
+          isSessionWritable(sessionRef.current)
+        ) {
           try {
             sessionRef.current.sendRealtimeInput({
               audioStreamEnd: true
@@ -558,25 +884,25 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
         if (stoppedByUserRef.current) {
           setVoiceState("assistant-responding");
         }
-      });
-
-      mediaRecorder.start(250);
-    } catch (error) {
-      void shutdownLiveSession(
-        error instanceof Error
-          ? error.message
-          : "Microphone access could not be started."
-      );
-    }
+      };
+    });
   };
 
-  const stopListening = () => {
-    if (!mediaRecorderRef.current || voiceState !== "listening") {
-      return;
-    }
+  const endConversation = () => {
+    shouldIgnoreCurrentTurnRef.current = true;
+    shouldResetConversationRef.current = false;
+    activeAssistantMessageIdRef.current = null;
+    activeUserMessageIdRef.current = null;
+    void closeAudioInput();
+    void closeAudioOutput();
+    resetConversationState();
+    setErrorMessage(null);
+    setVoiceState("idle");
+  };
 
-    stoppedByUserRef.current = true;
-    mediaRecorderRef.current.stop();
+  const updateSelectedMicrophoneId = (deviceId: string) => {
+    setSelectedMicrophoneId(deviceId);
+    persistMicrophoneId(deviceId);
   };
 
   const retryConnection = () => {
@@ -586,10 +912,15 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   return {
     errorMessage,
     messages,
+    microphoneDevices,
+    isLoadingMicrophones,
+    endConversation,
     retryConnection,
+    selectedMicrophoneId,
     sessionInfo,
     startListening,
     stopListening,
+    updateSelectedMicrophoneId,
     voiceState
   };
 };
