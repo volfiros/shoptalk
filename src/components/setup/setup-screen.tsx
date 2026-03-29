@@ -55,7 +55,7 @@ export const SetupScreen = () => {
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    const nextKey = draftKey || value || "";
+    const nextKey = (draftKey || value || "").trim();
     const nextError = validateApiKey(nextKey);
 
     setError(nextError);
@@ -65,11 +65,40 @@ export const SetupScreen = () => {
     }
 
     setIsSubmitting(true);
-    setValue(nextKey.trim());
 
-    startTransition(() => {
-      router.push("/chat");
-    });
+    void (async () => {
+      try {
+        const response = await fetch("/api/live/validate", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ apiKey: nextKey })
+        });
+
+        if (!response.ok) {
+          const payload = (await response.json()) as { error?: string };
+          throw new Error(
+            payload.error === "invalid_api_key"
+              ? "The Gemini key could not be validated."
+              : "The Gemini key could not be checked right now."
+          );
+        }
+
+        setValue(nextKey);
+
+        startTransition(() => {
+          router.push("/chat");
+        });
+      } catch (submissionError) {
+        setError(
+          submissionError instanceof Error
+            ? submissionError.message
+            : "The Gemini key could not be checked right now."
+        );
+        setIsSubmitting(false);
+      }
+    })();
   };
 
   const handleClear = () => {

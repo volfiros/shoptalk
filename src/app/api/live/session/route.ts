@@ -1,0 +1,74 @@
+import { GoogleGenAI, Modality } from "@google/genai";
+import { NextResponse } from "next/server";
+import { LIVE_MODEL, LIVE_VOICE } from "@/lib/live/config";
+
+type SessionBody = {
+  apiKey?: string;
+};
+
+const buildClient = (apiKey: string) => {
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      apiVersion: "v1alpha"
+    }
+  });
+};
+
+export const POST = async (request: Request) => {
+  let body: SessionBody;
+
+  try {
+    body = (await request.json()) as SessionBody;
+  } catch {
+    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
+  }
+
+  const apiKey = body.apiKey?.trim();
+
+  if (!apiKey) {
+    return NextResponse.json({ error: "missing_api_key" }, { status: 400 });
+  }
+
+  try {
+    const ai = buildClient(apiKey);
+    const token = await ai.authTokens.create({
+      config: {
+        uses: 1,
+        expireTime: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        newSessionExpireTime: new Date(Date.now() + 60 * 1000).toISOString(),
+        liveConnectConstraints: {
+          model: LIVE_MODEL,
+          config: {
+            responseModalities: [Modality.AUDIO],
+            sessionResumption: {},
+            inputAudioTranscription: {},
+            outputAudioTranscription: {},
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: {
+                  voiceName: LIVE_VOICE
+                }
+              }
+            },
+            temperature: 0.4
+          }
+        },
+        httpOptions: {
+          apiVersion: "v1alpha"
+        }
+      }
+    });
+
+    return NextResponse.json({
+      token: token.name,
+      model: LIVE_MODEL,
+      voice: LIVE_VOICE
+    });
+  } catch {
+    return NextResponse.json(
+      { error: "session_token_failed" },
+      { status: 401 }
+    );
+  }
+};
