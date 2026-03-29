@@ -7,6 +7,10 @@ import {
   LIVE_SESSION_CONFIG,
   LIVE_VOICE
 } from "@/lib/live/config";
+import {
+  getGeminiClientErrorMessage,
+  getGeminiValidationErrorMessage
+} from "@/lib/session";
 
 type VoiceState =
   | "connecting"
@@ -28,6 +32,7 @@ type SessionPayload = {
   token: string;
   model: string;
   voice: string;
+  error?: string;
 };
 
 type UseLiveSessionOptions = {
@@ -129,6 +134,28 @@ const pcmFloat32ToBase64 = (input: Float32Array) => {
   });
 
   return window.btoa(binary);
+};
+
+const getMicrophoneErrorMessage = (error: unknown) => {
+  if (!(error instanceof Error)) {
+    return "Microphone access could not be started.";
+  }
+
+  switch (error.name) {
+    case "NotAllowedError":
+    case "SecurityError":
+      return "Microphone access was blocked. Allow microphone access and try again.";
+    case "NotFoundError":
+    case "DevicesNotFoundError":
+      return "No microphone was found for this browser.";
+    case "NotReadableError":
+    case "TrackStartError":
+      return "The microphone is currently unavailable because another app may be using it.";
+    case "OverconstrainedError":
+      return "The selected microphone is no longer available.";
+    default:
+      return error.message || "Microphone access could not be started.";
+  }
 };
 
 export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
@@ -514,35 +541,46 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
 
     const functionResponses = await Promise.all(
       functionCalls.map(async (functionCall) => {
-        const response = await fetch("/api/support/tool", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            toolName: functionCall.name,
-            args: functionCall.args ?? {}
-          })
-        });
+        try {
+          const response = await fetch("/api/support/tool", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              toolName: functionCall.name,
+              args: functionCall.args ?? {}
+            })
+          });
 
-        const payload = (await response.json()) as {
-          error?: string;
-          result?: unknown;
-        };
+          const payload = (await response.json()) as {
+            error?: string;
+            result?: unknown;
+          };
 
-        return {
-          id: functionCall.id,
-          name: functionCall.name,
-          response: response.ok
-            ? {
-                ok: true,
-                result: payload.result
-              }
-            : {
-                ok: false,
-                error: payload.error ?? "tool_failed"
-              }
-        };
+          return {
+            id: functionCall.id,
+            name: functionCall.name,
+            response: response.ok
+              ? {
+                  ok: true,
+                  result: payload.result
+                }
+              : {
+                  ok: false,
+                  error: payload.error ?? "tool_failed"
+                }
+          };
+        } catch {
+          return {
+            id: functionCall.id,
+            name: functionCall.name,
+            response: {
+              ok: false,
+              error: "tool_request_failed"
+            }
+          };
+        }
       })
     );
 
@@ -583,11 +621,11 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
           body: JSON.stringify({ apiKey })
         });
 
-        if (!response.ok) {
-          throw new Error("Unable to start the live session.");
-        }
-
         const payload = (await response.json()) as SessionPayload;
+
+        if (!response.ok) {
+          throw new Error(getGeminiValidationErrorMessage(payload.error));
+        }
 
         if (!payload.token) {
           throw new Error("The live session token response was incomplete.");
@@ -720,11 +758,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
         shouldSendAudioStreamEndRef.current = true;
       } catch (error) {
         if (!cancelled) {
-          void shutdownLiveSession(
-            error instanceof Error
-              ? error.message
-              : "Unable to connect the live session."
-          );
+          void shutdownLiveSession(getGeminiClientErrorMessage(error));
         }
       }
     };
@@ -838,9 +872,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       }
     } catch (error) {
       void shutdownLiveSession(
-        error instanceof Error
-          ? error.message
-          : "Microphone access could not be started."
+        getMicrophoneErrorMessage(error)
       );
     }
   };

@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
+import { normalizeGeminiError } from "@/lib/gemini-errors";
 import { LIVE_MODEL, LIVE_SESSION_CONFIG, LIVE_VOICE } from "@/lib/live/config";
 
 type SessionBody = {
@@ -52,10 +53,12 @@ export const POST = async (request: Request) => {
       model: LIVE_MODEL,
       voice: LIVE_VOICE
     });
-  } catch {
+  } catch (error) {
+    const normalizedError = normalizeGeminiError(error);
+
     return NextResponse.json(
-      { error: "session_token_failed" },
-      { status: 401 }
+      { error: normalizedError.code },
+      { status: normalizedError.status }
     );
   }
 };

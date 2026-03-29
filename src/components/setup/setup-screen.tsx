@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { useSessionValue } from "@/hooks/use-session-value";
 import {
   GEMINI_API_KEY_STORAGE_KEY,
+  getGeminiClientErrorMessage,
   getGeminiValidationErrorMessage,
   validateGeminiApiKey
 } from "@/lib/session";
@@ -78,9 +79,7 @@ export const SetupScreen = () => {
         });
       } catch (submissionError) {
         setError(
-          submissionError instanceof Error
-            ? submissionError.message
-            : getGeminiValidationErrorMessage()
+          getGeminiClientErrorMessage(submissionError)
         );
         setIsSubmitting(false);
       }

@@ -13,6 +13,7 @@ import { useLiveSession } from "@/hooks/use-live-session";
 import { useSessionValue } from "@/hooks/use-session-value";
 import {
   GEMINI_API_KEY_STORAGE_KEY,
+  getGeminiClientErrorMessage,
   getGeminiValidationErrorMessage,
   validateGeminiApiKey
 } from "@/lib/session";
@@ -160,9 +161,7 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
       setIsSettingsOpen(false);
     } catch (saveError) {
       setSettingsError(
-        saveError instanceof Error
-          ? saveError.message
-          : getGeminiValidationErrorMessage()
+        getGeminiClientErrorMessage(saveError)
       );
     } finally {
       setIsSavingKey(false);

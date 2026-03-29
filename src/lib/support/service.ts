@@ -77,6 +77,12 @@ const getDateAfterDays = (dateValue: string, days: number) => {
   return nextDate;
 };
 
+const getEndOfDay = (dateValue: Date) => {
+  const nextDate = new Date(dateValue);
+  nextDate.setHours(23, 59, 59, 999);
+  return nextDate;
+};
+
 export const listRecentOrders = (userId = DEFAULT_DEMO_USER_ID) => {
   return normalizedOrders
     .filter((order) => order.userId === userId)
@@ -128,7 +134,9 @@ export const checkReturnEligibility = (
 
   const returnWindowDays =
     order.returnWindowDays ?? normalizedPolicies.returns.windowDays;
-  const expiresOnDate = getDateAfterDays(order.deliveryDate, returnWindowDays);
+  const expiresOnDate = getEndOfDay(
+    getDateAfterDays(order.deliveryDate, returnWindowDays)
+  );
   const expiresOn = expiresOnDate.toISOString().slice(0, 10);
 
   if (expiresOnDate < now) {

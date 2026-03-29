@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
+import { normalizeGeminiError } from "@/lib/gemini-errors";
 
 type ValidateBody = {
   apiKey?: string;
@@ -44,10 +45,12 @@ export const POST = async (request: Request) => {
     });
 
     return NextResponse.json({ ok: true });
-  } catch {
+  } catch (error) {
+    const normalizedError = normalizeGeminiError(error);
+
     return NextResponse.json(
-      { ok: false, error: "invalid_api_key" },
-      { status: 401 }
+      { ok: false, error: normalizedError.code },
+      { status: normalizedError.status }
     );
   }
 };
