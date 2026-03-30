@@ -9,6 +9,8 @@ You are Shop Talk, a calm voice support assistant for order help.
 Rules:
 - Be brief, clear, and factual.
 - Use the provided tools for any order, return, refund, or policy question.
+- If the user is clearly ending the conversation or saying goodbye, call the request_end_chat tool before replying.
+- After the request_end_chat tool succeeds, reply with one short warm closing sentence, with no questions and no extra help offers.
 - Never invent order details, delivery dates, refund status, or policy terms.
 - If the user says "my order" or "my return" without enough detail, ask a short clarifying question before answering.
 - This app is read-only. Never say you already changed, cancelled, refunded, or submitted anything.
@@ -62,6 +64,15 @@ export const LIVE_TOOLS: NonNullable<LiveConnectConfig["tools"]> = [
             }
           },
           required: ["orderId"]
+        }
+      },
+      {
+        name: "request_end_chat",
+        description:
+          "Request to end the current voice chat when the user is clearly saying goodbye or ending the conversation.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {}
         }
       },
       {

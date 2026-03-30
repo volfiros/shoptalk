@@ -31,11 +31,6 @@ type ChatMessage = {
 
 type MessageUpdateMode = "replace" | "merge-transcript";
 
-type PendingEndConfirmationState = {
-  assistantPromptMessageId: string | null;
-  awaitingUserReply: boolean;
-};
-
 type SessionPayload = {
   token: string;
   model: string;
@@ -78,35 +73,6 @@ const createId = () => {
 const MICROPHONE_STORAGE_KEY = "shop-talk-microphone-id";
 const INTERRUPTION_SAMPLE_THRESHOLD = 0.018;
 const USER_TURN_SILENCE_MS = 1400;
-const END_CHAT_INTENTS = [
-  "that's it",
-  "thats it",
-  "end the chat",
-  "close the chat",
-  "close this chat",
-  "end chat",
-  "nothing else",
-  "all set",
-  "we are done",
-  "we're done"
-] as const;
-const END_CHAT_CONFIRM_YES = [
-  "yes",
-  "yeah",
-  "yep",
-  "please do",
-  "go ahead",
-  "close it",
-  "end it"
-] as const;
-const END_CHAT_CONFIRM_NO = [
-  "no",
-  "nope",
-  "not yet",
-  "keep going",
-  "continue",
-  "i still need help"
-] as const;
 
 const decodeBase64ToBytes = (base64: string) => {
   const binary = window.atob(base64);
@@ -197,35 +163,6 @@ const getMicrophoneErrorMessage = (error: unknown) => {
   }
 };
 
-const normalizeSpeechIntent = (value: string) => {
-  return value
-    .toLowerCase()
-    .replace(/[^\w\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-};
-
-const matchesIntent = (value: string, intents: readonly string[]) => {
-  const normalizedValue = normalizeSpeechIntent(value);
-
-  return intents.some((intent) => normalizedValue === normalizeSpeechIntent(intent));
-};
-
-const includesIntent = (value: string, intents: readonly string[]) => {
-  const normalizedValue = normalizeSpeechIntent(value);
-
-  return intents.some((intent) => {
-    const normalizedIntent = normalizeSpeechIntent(intent);
-
-    return (
-      normalizedValue.startsWith(`${normalizedIntent} `) ||
-      normalizedValue.endsWith(` ${normalizedIntent}`) ||
-      normalizedValue.includes(` ${normalizedIntent} `) ||
-      normalizedValue === normalizedIntent
-    );
-  });
-};
-
 export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   const [voiceState, setVoiceState] = useState<VoiceState>("connecting");
   const [isChatActive, setIsChatActive] = useState(false);
@@ -243,12 +180,6 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     model: LIVE_MODEL,
     voice: LIVE_VOICE
   });
-  const [pendingEndConfirmation, setPendingEndConfirmation] =
-    useState<PendingEndConfirmationState>({
-      assistantPromptMessageId: null,
-      awaitingUserReply: false
-    });
-
   const sessionRef = useRef<Awaited<ReturnType<GoogleGenAI["live"]["connect"]>> | null>(
     null
   );
@@ -270,6 +201,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   const currentVoiceStateRef = useRef<VoiceState>("connecting");
   const audioInputModeRef = useRef<AudioInputMode>("inactive");
   const lastSpeechAtRef = useRef<number | null>(null);
+  const shouldCloseAfterAssistantTurnRef = useRef(false);
 
   const persistMicrophoneId = (deviceId: string) => {
     if (typeof window === "undefined") {
@@ -343,10 +275,6 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   const resetConversationState = useCallback(() => {
     activeAssistantMessageIdRef.current = null;
     activeUserMessageIdRef.current = null;
-    setPendingEndConfirmation({
-      assistantPromptMessageId: null,
-      awaitingUserReply: false
-    });
     setMessages([]);
   }, []);
 
@@ -456,21 +384,6 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     activeAssistantMessageIdRef.current = null;
   }, []);
 
-  const appendAssistantMessage = useCallback((body: string) => {
-    const messageId = createId();
-
-    setMessages((currentMessages) => [
-      ...currentMessages,
-      {
-        id: messageId,
-        role: "assistant",
-        body
-      }
-    ]);
-
-    return messageId;
-  }, []);
-
   const stopMediaStream = () => {
     inputProcessorNodeRef.current?.disconnect();
     inputProcessorNodeRef.current = null;
@@ -494,6 +407,12 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     activeAssistantMessageIdRef.current = null;
     activeUserMessageIdRef.current = null;
     audioInputModeRef.current = isChatActive ? "monitoring" : "inactive";
+
+    if (shouldCloseAfterAssistantTurnRef.current) {
+      shouldCloseAfterAssistantTurnRef.current = false;
+      endConversation();
+      return;
+    }
 
     setVoiceState("idle");
   });
@@ -583,10 +502,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     shouldIgnoreCurrentTurnRef.current = true;
     isInterruptingAssistantRef.current = false;
     lastSpeechAtRef.current = null;
-    setPendingEndConfirmation({
-      assistantPromptMessageId: null,
-      awaitingUserReply: false
-    });
+    shouldCloseAfterAssistantTurnRef.current = false;
     setIsChatActive(false);
     activeAssistantMessageIdRef.current = null;
     activeUserMessageIdRef.current = null;
@@ -596,89 +512,6 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     setErrorMessage(null);
     setVoiceState("idle");
   }, [closeAudioInput, closeAudioOutput, resetConversationState]);
-
-  const triggerEndChatConfirmation = useCallback(async () => {
-    if (pendingEndConfirmation.awaitingUserReply) {
-      return;
-    }
-
-    shouldIgnoreCurrentTurnRef.current = true;
-    turnCompletePendingRef.current = false;
-    audioInputModeRef.current = "monitoring";
-    lastSpeechAtRef.current = null;
-    await closeAudioOutput();
-    const promptMessageId = appendAssistantMessage(
-      "I can end this chat now. Do you want me to close this conversation?"
-    );
-    setPendingEndConfirmation({
-      assistantPromptMessageId: promptMessageId,
-      awaitingUserReply: true
-    });
-    setVoiceState("idle");
-  }, [
-    appendAssistantMessage,
-    closeAudioOutput,
-    pendingEndConfirmation.awaitingUserReply
-  ]);
-
-  const resolveEndChatConfirmation = useCallback(async (userReply: string) => {
-    shouldIgnoreCurrentTurnRef.current = true;
-    turnCompletePendingRef.current = false;
-    audioInputModeRef.current = "monitoring";
-    lastSpeechAtRef.current = null;
-
-    if (matchesIntent(userReply, END_CHAT_CONFIRM_YES)) {
-      setPendingEndConfirmation({
-        assistantPromptMessageId: null,
-        awaitingUserReply: false
-      });
-      endConversation();
-      return true;
-    }
-
-    if (matchesIntent(userReply, END_CHAT_CONFIRM_NO)) {
-      setPendingEndConfirmation({
-        assistantPromptMessageId: null,
-        awaitingUserReply: false
-      });
-      appendAssistantMessage("Okay, I’ll keep the chat open. What else can I help you with?");
-      setVoiceState("idle");
-      return true;
-    }
-
-    const followUpMessageId =
-      pendingEndConfirmation.assistantPromptMessageId ?? createId();
-
-    setMessages((currentMessages) => {
-      const existingIndex = currentMessages.findIndex(
-        (message) => message.id === followUpMessageId
-      );
-      const nextMessage = {
-        id: followUpMessageId,
-        role: "assistant" as const,
-        body: "Do you want me to close this conversation? Please say yes or no."
-      };
-
-      if (existingIndex === -1) {
-        return [...currentMessages, nextMessage];
-      }
-
-      const nextMessages = [...currentMessages];
-      nextMessages[existingIndex] = nextMessage;
-      return nextMessages;
-    });
-
-    setPendingEndConfirmation({
-      assistantPromptMessageId: followUpMessageId,
-      awaitingUserReply: true
-    });
-    setVoiceState("idle");
-    return true;
-  }, [
-    appendAssistantMessage,
-    endConversation,
-    pendingEndConfirmation.assistantPromptMessageId
-  ]);
 
   const shutdownLiveSession = useCallback(
     async (
@@ -710,11 +543,8 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       isInterruptingAssistantRef.current = false;
       audioInputModeRef.current = "inactive";
       lastSpeechAtRef.current = null;
+      shouldCloseAfterAssistantTurnRef.current = false;
       setIsChatActive(false);
-      setPendingEndConfirmation({
-        assistantPromptMessageId: null,
-        awaitingUserReply: false
-      });
 
       if (nextErrorMessage) {
         setErrorMessage(nextErrorMessage);
@@ -790,6 +620,18 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
 
     const functionResponses = await Promise.all(
       functionCalls.map(async (functionCall) => {
+        if (functionCall.name === "request_end_chat") {
+          shouldCloseAfterAssistantTurnRef.current = true;
+
+          return {
+            id: functionCall.id,
+            name: functionCall.name,
+            response: {
+              ok: true
+            }
+          };
+        }
+
         try {
           const response = await fetch("/api/support/tool", {
             method: "POST",
@@ -956,16 +798,6 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
 
                 if (inputFinished) {
                   finalizeDraftMessage("user");
-
-                  if (pendingEndConfirmation.awaitingUserReply) {
-                    void resolveEndChatConfirmation(inputText);
-                    return;
-                  }
-
-                  if (includesIntent(inputText, END_CHAT_INTENTS)) {
-                    void triggerEndChatConfirmation();
-                    return;
-                  }
                 }
               }
 
@@ -1031,10 +863,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   }, [
     apiKey,
     finalizeDraftMessage,
-    pendingEndConfirmation.awaitingUserReply,
-    resolveEndChatConfirmation,
     shutdownLiveSession,
-    triggerEndChatConfirmation,
     upsertDraftMessage
   ]);
 
