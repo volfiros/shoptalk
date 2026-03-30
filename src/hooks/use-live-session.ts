@@ -29,7 +29,7 @@ type ChatMessage = {
   wasInterrupted?: boolean;
 };
 
-type MessageUpdateMode = "replace" | "merge-transcript";
+type MessageUpdateMode = "merge-transcript";
 
 type SessionPayload = {
   token: string;
@@ -211,6 +211,11 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     window.sessionStorage.setItem(MICROPHONE_STORAGE_KEY, deviceId);
   };
 
+  const clearActiveMessageRefs = useCallback(() => {
+    activeAssistantMessageIdRef.current = null;
+    activeUserMessageIdRef.current = null;
+  }, []);
+
   const refreshMicrophones = useCallback(async () => {
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) {
       setIsLoadingMicrophones(false);
@@ -273,10 +278,9 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   };
 
   const resetConversationState = useCallback(() => {
-    activeAssistantMessageIdRef.current = null;
-    activeUserMessageIdRef.current = null;
+    clearActiveMessageRefs();
     setMessages([]);
-  }, []);
+  }, [clearActiveMessageRefs]);
 
   const mergeTranscriptText = (currentText: string, nextText: string) => {
     if (!currentText) {
@@ -303,7 +307,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     }
   ) => {
     const finished = options?.finished ?? false;
-    const mode = options?.mode ?? "replace";
+    const mode = options?.mode;
     const targetRef =
       role === "user" ? activeUserMessageIdRef : activeAssistantMessageIdRef;
     const targetId = targetRef.current ?? createId();
@@ -404,8 +408,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     }
 
     turnCompletePendingRef.current = false;
-    activeAssistantMessageIdRef.current = null;
-    activeUserMessageIdRef.current = null;
+    clearActiveMessageRefs();
     audioInputModeRef.current = isChatActive ? "monitoring" : "inactive";
 
     if (shouldCloseAfterAssistantTurnRef.current) {
@@ -504,14 +507,13 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     lastSpeechAtRef.current = null;
     shouldCloseAfterAssistantTurnRef.current = false;
     setIsChatActive(false);
-    activeAssistantMessageIdRef.current = null;
-    activeUserMessageIdRef.current = null;
+    clearActiveMessageRefs();
     void closeAudioInput();
     void closeAudioOutput();
     resetConversationState();
     setErrorMessage(null);
     setVoiceState("idle");
-  }, [closeAudioInput, closeAudioOutput, resetConversationState]);
+  }, [clearActiveMessageRefs, closeAudioInput, closeAudioOutput, resetConversationState]);
 
   const shutdownLiveSession = useCallback(
     async (
@@ -537,8 +539,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
 
       await closeAudioOutput();
 
-      activeAssistantMessageIdRef.current = null;
-      activeUserMessageIdRef.current = null;
+      clearActiveMessageRefs();
       shouldIgnoreCurrentTurnRef.current = false;
       isInterruptingAssistantRef.current = false;
       audioInputModeRef.current = "inactive";
@@ -551,7 +552,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
         setVoiceState("error");
       }
     },
-    [closeAudioInput, closeAudioOutput]
+    [clearActiveMessageRefs, closeAudioInput, closeAudioOutput]
   );
 
   useEffect(() => {
@@ -747,8 +748,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
               if (shouldIgnoreCurrentTurnRef.current) {
                 if (message.serverContent?.turnComplete) {
                   shouldIgnoreCurrentTurnRef.current = false;
-                  activeAssistantMessageIdRef.current = null;
-                  activeUserMessageIdRef.current = null;
+                  clearActiveMessageRefs();
                 }
 
                 return;
@@ -862,6 +862,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     };
   }, [
     apiKey,
+    clearActiveMessageRefs,
     finalizeDraftMessage,
     shutdownLiveSession,
     upsertDraftMessage
