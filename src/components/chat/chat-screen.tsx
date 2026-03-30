@@ -40,6 +40,7 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
   const {
     endConversation,
     errorMessage,
+    isChatActive,
     isLoadingMicrophones,
     messages,
     microphoneDevices,
@@ -47,7 +48,6 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
     selectedMicrophoneId,
     sessionInfo,
     startListening,
-    stopListening,
     updateSelectedMicrophoneId,
     voiceState
   } = useLiveSession({ apiKey: value });
@@ -69,22 +69,22 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
   }, [isSavingKey, value]);
 
   const microphoneSelectionDisabled =
+    isChatActive ||
     voiceState === "connecting" ||
     voiceState === "listening" ||
-    voiceState === "assistant-responding" ||
-    voiceState === "interrupted-listening";
+    voiceState === "assistant-responding";
   const statusCopy =
     voiceState === "connecting"
       ? "Connecting the live session."
       : voiceState === "listening"
-        ? "Listening now. Stop when you finish speaking."
+        ? "Listening now. Keep talking and the turn will end automatically."
         : voiceState === "assistant-responding"
-          ? "Assistant is responding. The mic stays disabled until the turn completes."
-          : voiceState === "interrupted-listening"
-            ? "Interrupted, listening..."
+          ? "Assistant is responding. Start speaking to interrupt immediately."
           : voiceState === "error"
             ? "The session needs attention before recording can continue."
-            : "Ready for another turn.";
+            : isChatActive
+              ? "Chat is live. Start speaking whenever you need help."
+              : "Ready to start a live voice chat.";
 
   useEffect(() => {
     if (ready && !value) {
@@ -397,16 +397,8 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
                   {statusCopy}
                 </div>
               </div>
-              {voiceState === "listening" || voiceState === "interrupted-listening" ? (
+              {isChatActive ? (
                 <div className="flex flex-col gap-2 sm:flex-row sm:justify-center">
-                  <Button onClick={stopListening}>Stop recording</Button>
-                  <Button variant="outline" onClick={endConversation}>
-                    End chat
-                  </Button>
-                </div>
-              ) : voiceState === "assistant-responding" ? (
-                <div className="flex flex-col gap-2 sm:flex-row sm:justify-center">
-                  <Button disabled>Assistant responding...</Button>
                   <Button variant="outline" onClick={endConversation}>
                     End chat
                   </Button>
