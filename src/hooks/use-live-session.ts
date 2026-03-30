@@ -17,6 +17,7 @@ type VoiceState =
   | "idle"
   | "listening"
   | "assistant-responding"
+  | "interrupted-listening"
   | "error";
 
 type ChatMessage = {
@@ -24,6 +25,7 @@ type ChatMessage = {
   role: "user" | "assistant";
   body: string;
   isDraft?: boolean;
+  wasInterrupted?: boolean;
 };
 
 type MessageUpdateMode = "replace" | "merge-transcript";
@@ -68,6 +70,8 @@ const createId = () => {
 };
 
 const MICROPHONE_STORAGE_KEY = "shop-talk-microphone-id";
+const INTERRUPTION_SAMPLE_THRESHOLD = 0.018;
+const INTERRUPTION_REQUIRED_FRAMES = 3;
 
 const decodeBase64ToBytes = (base64: string) => {
   const binary = window.atob(base64);
@@ -194,6 +198,9 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   const shouldSendAudioStreamEndRef = useRef(true);
   const shouldResetConversationRef = useRef(false);
   const shouldIgnoreCurrentTurnRef = useRef(false);
+  const isInterruptingAssistantRef = useRef(false);
+  const interruptionFrameCountRef = useRef(0);
+  const currentVoiceStateRef = useRef<VoiceState>("connecting");
 
   const persistMicrophoneId = (deviceId: string) => {
     if (typeof window === "undefined") {
@@ -355,6 +362,28 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     targetRef.current = null;
   }, []);
 
+  const markAssistantMessageInterrupted = useCallback(() => {
+    const targetId = activeAssistantMessageIdRef.current;
+
+    if (!targetId) {
+      return;
+    }
+
+    setMessages((currentMessages) =>
+      currentMessages.map((message) =>
+        message.id === targetId
+          ? {
+              ...message,
+              isDraft: false,
+              wasInterrupted: true
+            }
+          : message
+      )
+    );
+
+    activeAssistantMessageIdRef.current = null;
+  }, []);
+
   const stopMediaStream = () => {
     inputProcessorNodeRef.current?.disconnect();
     inputProcessorNodeRef.current = null;
@@ -427,6 +456,29 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     }
   }, []);
 
+  const interruptAssistantTurn = useCallback(async () => {
+    if (
+      isInterruptingAssistantRef.current ||
+      currentVoiceStateRef.current !== "assistant-responding"
+    ) {
+      return;
+    }
+
+    isInterruptingAssistantRef.current = true;
+    shouldIgnoreCurrentTurnRef.current = true;
+    turnCompletePendingRef.current = false;
+    interruptionFrameCountRef.current = 0;
+    markAssistantMessageInterrupted();
+    await closeAudioOutput();
+    setErrorMessage(null);
+    setVoiceState("interrupted-listening");
+    isInterruptingAssistantRef.current = false;
+  }, [closeAudioOutput, markAssistantMessageInterrupted]);
+
+  useEffect(() => {
+    currentVoiceStateRef.current = voiceState;
+  }, [voiceState]);
+
   const closeAudioInput = useCallback(async () => {
     stopMediaStream();
 
@@ -466,6 +518,8 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       activeUserMessageIdRef.current = null;
       shouldResetConversationRef.current = false;
       shouldIgnoreCurrentTurnRef.current = false;
+      interruptionFrameCountRef.current = 0;
+      isInterruptingAssistantRef.current = false;
 
       if (nextErrorMessage) {
         setErrorMessage(nextErrorMessage);
@@ -769,10 +823,13 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       cancelled = true;
       void shutdownLiveSession();
     };
-  }, [apiKey, finalizeDraftMessage, shutdownLiveSession, upsertDraftMessage]);
+  }, [apiKey, finalizeDraftMessage, markAssistantMessageInterrupted, shutdownLiveSession, upsertDraftMessage]);
 
   const startListening = async () => {
-    if (!sessionRef.current || voiceState !== "idle") {
+    if (
+      !sessionRef.current ||
+      !["idle", "assistant-responding", "interrupted-listening"].includes(voiceState)
+    ) {
       return;
     }
 
@@ -821,13 +878,18 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       inputSilenceNode.gain.value = 0;
 
       stoppedByUserRef.current = false;
+      interruptionFrameCountRef.current = 0;
       mediaStreamRef.current = mediaStream;
       inputAudioContextRef.current = inputAudioContext;
       inputSourceNodeRef.current = inputSourceNode;
       inputProcessorNodeRef.current = inputProcessorNode;
       inputSilenceNodeRef.current = inputSilenceNode;
       setErrorMessage(null);
-      setVoiceState("listening");
+      setVoiceState(
+        voiceState === "assistant-responding" || voiceState === "interrupted-listening"
+          ? "interrupted-listening"
+          : "listening"
+      );
 
       inputProcessorNode.onaudioprocess = (event) => {
         const session = sessionRef.current;
@@ -843,6 +905,35 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
             inputAudioContext.sampleRate,
             16_000
           );
+          const peakAmplitude = downsampledAudio.reduce((peak, sample) => {
+            return Math.max(peak, Math.abs(sample));
+          }, 0);
+
+          if (currentVoiceStateRef.current === "assistant-responding") {
+            if (peakAmplitude >= INTERRUPTION_SAMPLE_THRESHOLD) {
+              interruptionFrameCountRef.current += 1;
+            } else {
+              interruptionFrameCountRef.current = 0;
+            }
+
+            if (
+              interruptionFrameCountRef.current >= INTERRUPTION_REQUIRED_FRAMES &&
+              !isInterruptingAssistantRef.current
+            ) {
+              void interruptAssistantTurn();
+            }
+
+            if (!shouldIgnoreCurrentTurnRef.current) {
+              return;
+            }
+          }
+
+          if (
+            currentVoiceStateRef.current === "interrupted-listening" &&
+            peakAmplitude < INTERRUPTION_SAMPLE_THRESHOLD
+          ) {
+            return;
+          }
 
           if (sessionRef.current !== session || !isSessionWritable(session)) {
             return;
@@ -854,6 +945,10 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
               mimeType: "audio/pcm;rate=16000"
             }
           });
+
+          if (currentVoiceStateRef.current === "interrupted-listening") {
+            setVoiceState("listening");
+          }
         } catch (error) {
           void shutdownLiveSession(
             error instanceof Error
@@ -912,6 +1007,8 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   const endConversation = () => {
     shouldIgnoreCurrentTurnRef.current = true;
     shouldResetConversationRef.current = false;
+    interruptionFrameCountRef.current = 0;
+    isInterruptingAssistantRef.current = false;
     activeAssistantMessageIdRef.current = null;
     activeUserMessageIdRef.current = null;
     void closeAudioInput();

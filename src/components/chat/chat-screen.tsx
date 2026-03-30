@@ -71,7 +71,8 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
   const microphoneSelectionDisabled =
     voiceState === "connecting" ||
     voiceState === "listening" ||
-    voiceState === "assistant-responding";
+    voiceState === "assistant-responding" ||
+    voiceState === "interrupted-listening";
   const statusCopy =
     voiceState === "connecting"
       ? "Connecting the live session."
@@ -79,6 +80,8 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
         ? "Listening now. Stop when you finish speaking."
         : voiceState === "assistant-responding"
           ? "Assistant is responding. The mic stays disabled until the turn completes."
+          : voiceState === "interrupted-listening"
+            ? "Interrupted, listening..."
           : voiceState === "error"
             ? "The session needs attention before recording can continue."
             : "Ready for another turn.";
@@ -326,6 +329,11 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
                         >
                           {message.body}
                         </p>
+                        {message.role === "assistant" && message.wasInterrupted ? (
+                          <p className="mt-2 text-xs font-medium text-muted-foreground">
+                            Interrupted
+                          </p>
+                        ) : null}
                       </article>
                     </div>
                   ))}
@@ -389,7 +397,7 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
                   {statusCopy}
                 </div>
               </div>
-              {voiceState === "listening" ? (
+              {voiceState === "listening" || voiceState === "interrupted-listening" ? (
                 <div className="flex flex-col gap-2 sm:flex-row sm:justify-center">
                   <Button onClick={stopListening}>Stop recording</Button>
                   <Button variant="outline" onClick={endConversation}>
