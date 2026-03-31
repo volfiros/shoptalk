@@ -22,7 +22,7 @@ export const validateGeminiApiKey = (
 export const getGeminiValidationErrorMessage = (error?: string) => {
   switch (error as GeminiErrorCode | undefined) {
     case "invalid_api_key":
-      return "The Gemini key could not be validated.";
+      return "This is an invalid Gemini API key.";
     case "rate_limited":
       return "Gemini rate limits are being hit right now. Try again in a moment.";
     case "quota_exceeded":

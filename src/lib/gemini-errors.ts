@@ -46,8 +46,15 @@ export const normalizeGeminiError = (error: unknown) => {
     : "";
   const providerErrorText = getNestedErrorText(errorLike.error);
   const combinedText = `${rawMessage} ${providerErrorText}`.toLowerCase();
+  const looksLikeInvalidKey =
+    combinedText.includes("invalid api key") ||
+    combinedText.includes("api key not valid") ||
+    combinedText.includes("api_key_invalid") ||
+    combinedText.includes("authentication") ||
+    combinedText.includes("unauthorized") ||
+    combinedText.includes("permission denied");
 
-  if (status === 401 || status === 403) {
+  if (status === 401 || status === 403 || looksLikeInvalidKey) {
     return {
       code: "invalid_api_key" as GeminiErrorCode,
       status: status ?? 401
