@@ -164,8 +164,9 @@ const getMicrophoneErrorMessage = (error: unknown) => {
 };
 
 export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
-  const [voiceState, setVoiceState] = useState<VoiceState>("connecting");
+  const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [isChatActive, setIsChatActive] = useState(false);
+  const [shouldConnect, setShouldConnect] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoadingMicrophones, setIsLoadingMicrophones] = useState(true);
@@ -198,10 +199,11 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   const shouldSendAudioStreamEndRef = useRef(true);
   const shouldIgnoreCurrentTurnRef = useRef(false);
   const isInterruptingAssistantRef = useRef(false);
-  const currentVoiceStateRef = useRef<VoiceState>("connecting");
+  const currentVoiceStateRef = useRef<VoiceState>("idle");
   const audioInputModeRef = useRef<AudioInputMode>("inactive");
   const lastSpeechAtRef = useRef<number | null>(null);
   const shouldCloseAfterAssistantTurnRef = useRef(false);
+  const pendingStartChatRef = useRef(false);
 
   const persistMicrophoneId = (deviceId: string) => {
     if (typeof window === "undefined") {
@@ -694,7 +696,13 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   });
 
   useEffect(() => {
-    if (!apiKey) {
+    return () => {
+      void shutdownLiveSession();
+    };
+  }, [shutdownLiveSession]);
+
+  useEffect(() => {
+    if (!apiKey || !shouldConnect || sessionRef.current) {
       return;
     }
 
@@ -858,22 +866,27 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
 
     return () => {
       cancelled = true;
-      void shutdownLiveSession();
     };
   }, [
     apiKey,
     clearActiveMessageRefs,
     finalizeDraftMessage,
+    shouldConnect,
     shutdownLiveSession,
     upsertDraftMessage
   ]);
 
-  const startListening = async () => {
+  const startListening = useCallback(async () => {
     if (
-      !sessionRef.current ||
       voiceState !== "idle" ||
       isChatActive
     ) {
+      return;
+    }
+
+    if (!sessionRef.current) {
+      pendingStartChatRef.current = true;
+      setShouldConnect(true);
       return;
     }
 
@@ -933,9 +946,9 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       setVoiceState("idle");
 
       inputProcessorNode.onaudioprocess = (event) => {
-        const session = sessionRef.current;
+        const activeSession = sessionRef.current;
 
-        if (!session || !isSessionWritable(session)) {
+        if (!activeSession || !isSessionWritable(activeSession)) {
           return;
         }
 
@@ -980,18 +993,18 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
               lastSpeechAtRef.current &&
               performance.now() - lastSpeechAtRef.current >= USER_TURN_SILENCE_MS
             ) {
-              const activeSession = sessionRef.current;
+              const writableSession = sessionRef.current;
 
               audioInputModeRef.current = "monitoring";
               lastSpeechAtRef.current = null;
 
               if (
-                activeSession &&
+                writableSession &&
                 shouldSendAudioStreamEndRef.current &&
-                isSessionWritable(activeSession)
+                isSessionWritable(writableSession)
               ) {
                 try {
-                  activeSession.sendRealtimeInput({
+                  writableSession.sendRealtimeInput({
                     audioStreamEnd: true
                   });
                   setVoiceState("idle");
@@ -1010,11 +1023,11 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
             lastSpeechAtRef.current = performance.now();
           }
 
-          if (sessionRef.current !== session || !isSessionWritable(session)) {
+          if (sessionRef.current !== activeSession || !isSessionWritable(activeSession)) {
             return;
           }
 
-          session.sendRealtimeInput({
+          activeSession.sendRealtimeInput({
             audio: {
               data: pcmFloat32ToBase64(downsampledAudio),
               mimeType: "audio/pcm;rate=16000"
@@ -1042,7 +1055,28 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
         getMicrophoneErrorMessage(error)
       );
     }
-  };
+  }, [
+    isChatActive,
+    interruptAssistantTurn,
+    refreshMicrophones,
+    selectedMicrophoneId,
+    shutdownLiveSession,
+    voiceState
+  ]);
+
+  useEffect(() => {
+    if (
+      !pendingStartChatRef.current ||
+      !sessionRef.current ||
+      voiceState !== "idle" ||
+      isChatActive
+    ) {
+      return;
+    }
+
+    pendingStartChatRef.current = false;
+    void startListening();
+  }, [isChatActive, startListening, voiceState]);
 
   const updateSelectedMicrophoneId = (deviceId: string) => {
     setSelectedMicrophoneId(deviceId);
