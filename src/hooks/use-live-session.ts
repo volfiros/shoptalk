@@ -503,44 +503,34 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     }
   }, []);
 
-  const endConversation = useCallback(() => {
-    shouldIgnoreCurrentTurnRef.current = true;
-    isInterruptingAssistantRef.current = false;
-    lastSpeechAtRef.current = null;
-    shouldCloseAfterAssistantTurnRef.current = false;
-    setIsChatActive(false);
-    clearActiveMessageRefs();
-    void closeAudioInput();
-    void closeAudioOutput();
-    resetConversationState();
-    setErrorMessage(null);
-    setVoiceState("idle");
-  }, [clearActiveMessageRefs, closeAudioInput, closeAudioOutput, resetConversationState]);
-
   const shutdownLiveSession = useCallback(
     async (
       nextErrorMessage?: string,
       options?: {
-        keepClosedSession?: boolean;
+        skipSessionClose?: boolean;
       }
     ) => {
       sessionIsOpenRef.current = false;
       shouldSendAudioStreamEndRef.current = false;
+      pendingStartChatRef.current = false;
+      setShouldConnect(false);
 
       await closeAudioInput();
 
       const session = sessionRef.current;
+      sessionRef.current = null;
 
-      if (!options?.keepClosedSession) {
-        sessionRef.current = null;
-      }
-
-      if (session && !options?.keepClosedSession) {
+      if (session && !options?.skipSessionClose) {
         session.close();
       }
 
       await closeAudioOutput();
 
+      setSessionInfo({
+        sessionId: null,
+        model: LIVE_MODEL,
+        voice: LIVE_VOICE
+      });
       clearActiveMessageRefs();
       shouldIgnoreCurrentTurnRef.current = false;
       isInterruptingAssistantRef.current = false;
@@ -552,10 +542,19 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       if (nextErrorMessage) {
         setErrorMessage(nextErrorMessage);
         setVoiceState("error");
+        return;
       }
+
+      setErrorMessage(null);
+      setVoiceState("idle");
     },
     [clearActiveMessageRefs, closeAudioInput, closeAudioOutput]
   );
+
+  const endConversation = useCallback(() => {
+    resetConversationState();
+    void shutdownLiveSession();
+  }, [resetConversationState, shutdownLiveSession]);
 
   useEffect(() => {
     void refreshMicrophones();
@@ -840,7 +839,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
               if (!cancelled) {
                 sessionIsOpenRef.current = false;
                 void shutdownLiveSession("The live session closed.", {
-                  keepClosedSession: true
+                  skipSessionClose: true
                 });
               }
             }
