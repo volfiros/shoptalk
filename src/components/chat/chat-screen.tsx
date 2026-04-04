@@ -28,6 +28,34 @@ const EMPTY_PROMPTS = [
   "What is the refund policy?"
 ] as const;
 
+const EMPTY_PROMPT_BUTTON_CLASS_NAME =
+  "group rounded-xl border border-border/60 bg-background px-4 py-2.5 text-left text-[13px] leading-relaxed text-muted-foreground transition-all hover:bg-muted/60 focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 sm:px-5 sm:py-4 sm:text-sm sm:leading-6";
+
+type EmptyPromptButtonProps = {
+  prompt: string;
+  disabled: boolean;
+  hideOnMobile?: boolean;
+  onSelect: (prompt: string) => void;
+};
+
+const EmptyPromptButton = ({
+  prompt,
+  disabled,
+  hideOnMobile = false,
+  onSelect
+}: EmptyPromptButtonProps) => {
+  return (
+    <button
+      type="button"
+      className={`${EMPTY_PROMPT_BUTTON_CLASS_NAME} ${hideOnMobile ? "hidden sm:block" : "block"}`}
+      disabled={disabled}
+      onClick={() => onSelect(prompt)}
+    >
+      {prompt}
+    </button>
+  );
+};
+
 export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
   const router = useRouter();
   const transcriptViewportRef = useRef<HTMLDivElement | null>(null);
@@ -46,6 +74,7 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
     microphoneDevices,
     retryConnection,
     selectedMicrophoneId,
+    sendTextPrompt,
     sessionInfo,
     startListening,
     updateSelectedMicrophoneId,
@@ -67,6 +96,10 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
     setSettingsError(null);
     setDraftApiKey(value ?? "");
   }, [isSavingKey, value]);
+
+  const handleEmptyPromptSelect = useCallback((prompt: string) => {
+    sendTextPrompt(prompt);
+  }, [sendTextPrompt]);
 
   const microphoneSelectionDisabled =
     isChatActive ||
@@ -340,25 +373,26 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
                   ))}
                 </div>
               ) : (
-                <div className="flex h-full min-h-[28rem] items-center justify-center">
-                  <div className="w-full max-w-lg rounded-3xl border border-border/60 bg-surface/80 px-8 py-10 text-center shadow-[0_18px_48px_rgba(15,23,42,0.08)] backdrop-blur-xl">
-                    <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-accent text-accent-foreground">
-                      <Settings2 className="h-6 w-6" />
+                <div className="flex h-full min-h-0 sm:min-h-[28rem] items-center justify-center">
+                  <div className="w-full max-w-lg rounded-3xl border border-border/60 bg-surface/80 px-4 py-5 sm:px-8 sm:py-10 text-center shadow-[0_18px_48px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+                    <div className="mx-auto mb-2.5 sm:mb-4 flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-full bg-accent text-accent-foreground">
+                      <Settings2 className="h-5 w-5 sm:h-6 sm:w-6" />
                     </div>
-                    <p className="text-xl font-semibold tracking-tight text-foreground">
+                    <p className="text-lg sm:text-xl font-semibold tracking-tight text-foreground">
                       Welcome to Shop Talk
                     </p>
-                    <p className="mt-2 text-sm text-muted-foreground">
+                    <p className="mt-1 sm:mt-2 text-[13px] sm:text-sm text-muted-foreground">
                       Start speaking or click one of the examples below to try it out.
                     </p>
-                    <div className="mt-8 flex flex-col gap-3 text-left">
-                      {EMPTY_PROMPTS.map((prompt) => (
-                        <div
+                    <div className="mt-4 sm:mt-8 flex flex-col gap-2 sm:gap-3 text-left">
+                      {EMPTY_PROMPTS.map((prompt, index) => (
+                        <EmptyPromptButton
                           key={prompt}
-                          className="group cursor-pointer rounded-xl border border-border/60 bg-background px-5 py-4 text-sm leading-6 text-muted-foreground transition-all hover:bg-muted/60"
-                        >
-                          {prompt}
-                        </div>
+                          prompt={prompt}
+                          disabled={voiceState !== "idle"}
+                          hideOnMobile={index === 2}
+                          onSelect={handleEmptyPromptSelect}
+                        />
                       ))}
                     </div>
                   </div>

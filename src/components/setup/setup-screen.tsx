@@ -23,6 +23,8 @@ import {
   validateGeminiApiKey
 } from "@/lib/session";
 
+const ICON_BUTTON_CLASS_NAME = "h-10 w-10 rounded-xl";
+
 export const SetupScreen = () => {
   const router = useRouter();
   const { ready, value, setValue } = useSessionValue(GEMINI_API_KEY_STORAGE_KEY);
@@ -126,6 +128,16 @@ export const SetupScreen = () => {
     }
   };
 
+  const handleDraftKeyChange = (nextValue: string) => {
+    setDraftKey(nextValue);
+    setError(null);
+  };
+
+  const handleClearDraftKey = () => {
+    setDraftKey("");
+    setError(null);
+  };
+
   return (
     <AppShell>
       <PageFrame
@@ -148,10 +160,7 @@ export const SetupScreen = () => {
                         id="gemini-api-key"
                         type="password"
                         value={draftKey}
-                        onChange={(event) => {
-                          setDraftKey(event.target.value);
-                          if (error) setError(null);
-                        }}
+                        onChange={(event) => handleDraftKeyChange(event.target.value)}
                         aria-invalid={Boolean(error)}
                         placeholder="Paste your Gemini API key"
                         autoComplete="off"
@@ -161,10 +170,7 @@ export const SetupScreen = () => {
                       {draftKey ? (
                         <button
                           type="button"
-                          onClick={() => {
-                            setDraftKey("");
-                            setError(null);
-                          }}
+                          onClick={handleClearDraftKey}
                           className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center justify-center text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                           aria-label="Clear typed key"
                           title="Clear typed key"
@@ -178,7 +184,7 @@ export const SetupScreen = () => {
                       type="button"
                       variant="outline"
                       size="icon-sm"
-                      className="h-10 w-10 rounded-xl"
+                      className={ICON_BUTTON_CLASS_NAME}
                       aria-label="Paste Gemini API key"
                       title="Paste key"
                       disabled={!ready || isSubmitting}
@@ -190,7 +196,7 @@ export const SetupScreen = () => {
                       type="button"
                       variant="outline"
                       size="icon-sm"
-                      className="h-10 w-10 rounded-xl"
+                      className={ICON_BUTTON_CLASS_NAME}
                       aria-label="Copy Gemini API key"
                       title="Copy key"
                       disabled={!ready || isSubmitting}

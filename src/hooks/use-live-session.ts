@@ -204,6 +204,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   const lastSpeechAtRef = useRef<number | null>(null);
   const shouldCloseAfterAssistantTurnRef = useRef(false);
   const pendingStartChatRef = useRef(false);
+  const pendingTextPromptRef = useRef<string | null>(null);
 
   const persistMicrophoneId = (deviceId: string) => {
     if (typeof window === "undefined") {
@@ -283,6 +284,30 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     clearActiveMessageRefs();
     setMessages([]);
   }, [clearActiveMessageRefs]);
+
+  const appendMessage = useCallback((role: "user" | "assistant", body: string) => {
+    setMessages((currentMessages) => [
+      ...currentMessages,
+      {
+        id: createId(),
+        role,
+        body
+      }
+    ]);
+  }, []);
+
+  const dispatchTextPrompt = useCallback((
+    session: NonNullable<typeof sessionRef.current>,
+    prompt: string
+  ) => {
+    appendMessage("user", prompt);
+    setErrorMessage(null);
+    setVoiceState("assistant-responding");
+    session.sendClientContent({
+      turns: prompt,
+      turnComplete: true
+    });
+  }, [appendMessage]);
 
   const mergeTranscriptText = (currentText: string, nextText: string) => {
     if (!currentText) {
@@ -513,6 +538,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       sessionIsOpenRef.current = false;
       shouldSendAudioStreamEndRef.current = false;
       pendingStartChatRef.current = false;
+      pendingTextPromptRef.current = null;
       setShouldConnect(false);
 
       await closeAudioInput();
@@ -1063,6 +1089,31 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     voiceState
   ]);
 
+  const sendTextPrompt = useCallback((prompt: string) => {
+    const nextPrompt = prompt.trim();
+
+    if (!nextPrompt) {
+      return;
+    }
+
+    if (sessionRef.current && isSessionWritable(sessionRef.current)) {
+      try {
+        dispatchTextPrompt(sessionRef.current, nextPrompt);
+        return;
+      } catch (error) {
+        void shutdownLiveSession(
+          error instanceof Error
+            ? error.message
+            : "The prompt could not be sent."
+        );
+        return;
+      }
+    }
+
+    pendingTextPromptRef.current = nextPrompt;
+    setShouldConnect(true);
+  }, [dispatchTextPrompt, shutdownLiveSession]);
+
   useEffect(() => {
     if (
       !pendingStartChatRef.current ||
@@ -1076,6 +1127,31 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     pendingStartChatRef.current = false;
     void startListening();
   }, [isChatActive, startListening, voiceState]);
+
+  useEffect(() => {
+    if (
+      !pendingTextPromptRef.current ||
+      !sessionRef.current ||
+      voiceState !== "idle"
+    ) {
+      return;
+    }
+
+    const nextPrompt = pendingTextPromptRef.current;
+    pendingTextPromptRef.current = null;
+
+    if (nextPrompt) {
+      try {
+        dispatchTextPrompt(sessionRef.current, nextPrompt);
+      } catch (error) {
+        void shutdownLiveSession(
+          error instanceof Error
+            ? error.message
+            : "The prompt could not be sent."
+        );
+      }
+    }
+  }, [dispatchTextPrompt, shutdownLiveSession, voiceState]);
 
   const updateSelectedMicrophoneId = (deviceId: string) => {
     setSelectedMicrophoneId(deviceId);
@@ -1096,6 +1172,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     retryConnection,
     selectedMicrophoneId,
     sessionInfo,
+    sendTextPrompt,
     startListening,
     updateSelectedMicrophoneId,
     voiceState
