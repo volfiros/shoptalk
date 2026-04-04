@@ -16,17 +16,17 @@ export const SurfacePanel = ({
   return (
     <section
       className={cn(
-        "rounded-lg border border-border bg-surface p-5 text-surface-foreground shadow-[0_4px_14px_rgba(54,46,31,0.06)]",
+        "rounded-2xl border border-border/60 bg-surface/80 p-8 text-surface-foreground shadow-[0_12px_32px_rgba(15,23,42,0.08)] backdrop-blur-xl transition-all",
         className
       )}
     >
-      <div className="flex flex-col gap-1 border-b border-border pb-4">
-        <h2 className="text-base font-semibold text-foreground">{title}</h2>
+      <div className="flex flex-col gap-2 pb-6">
+        <h2 className="text-xl font-semibold tracking-tight text-foreground">{title}</h2>
         {description ? (
-          <p className="text-sm leading-6 text-muted-foreground">{description}</p>
+          <p className="text-sm leading-relaxed text-muted-foreground">{description}</p>
         ) : null}
       </div>
-      <div className="pt-4">{children}</div>
+      <div className="pt-2">{children}</div>
     </section>
   );
 };

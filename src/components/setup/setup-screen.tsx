@@ -1,7 +1,7 @@
 "use client";
 
 import { startTransition, useMemo, useState } from "react";
-import { Clipboard, Copy } from "lucide-react";
+import { Clipboard, Copy, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { PageFrame } from "@/components/layout/page-frame";
@@ -131,6 +131,7 @@ export const SetupScreen = () => {
       <PageFrame
         title="Add your Gemini key"
         description="Use your Gemini API key to start a local voice support session and continue into the chat interface."
+        headerClassName="mx-auto text-center"
       >
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
           <SurfacePanel
@@ -142,37 +143,60 @@ export const SetupScreen = () => {
                 <Field data-invalid={Boolean(error)}>
                   <FieldLabel htmlFor="gemini-api-key">Gemini API key</FieldLabel>
                   <div className="flex items-center gap-2">
-                    <Input
-                      id="gemini-api-key"
-                      type="password"
-                      value={draftKey}
-                      onChange={(event) => setDraftKey(event.target.value)}
-                      aria-invalid={Boolean(error)}
-                      placeholder="Paste your Gemini API key"
-                      autoComplete="off"
-                      disabled={!ready || isSubmitting}
-                    />
+                    <div className="relative w-full">
+                      <Input
+                        id="gemini-api-key"
+                        type="password"
+                        value={draftKey}
+                        onChange={(event) => {
+                          setDraftKey(event.target.value);
+                          if (error) setError(null);
+                        }}
+                        aria-invalid={Boolean(error)}
+                        placeholder="Paste your Gemini API key"
+                        autoComplete="off"
+                        disabled={!ready || isSubmitting}
+                        className={draftKey ? "pr-10" : ""}
+                      />
+                      {draftKey ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDraftKey("");
+                            setError(null);
+                          }}
+                          className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center justify-center text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                          aria-label="Clear typed key"
+                          title="Clear typed key"
+                          disabled={!ready || isSubmitting}
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      ) : null}
+                    </div>
                     <Button
                       type="button"
                       variant="outline"
                       size="icon-sm"
+                      className="h-10 w-10 rounded-xl"
                       aria-label="Paste Gemini API key"
                       title="Paste key"
                       disabled={!ready || isSubmitting}
                       onClick={handlePaste}
                     >
-                      <Clipboard />
+                      <Clipboard className="h-4 w-4" />
                     </Button>
                     <Button
                       type="button"
                       variant="outline"
                       size="icon-sm"
+                      className="h-10 w-10 rounded-xl"
                       aria-label="Copy Gemini API key"
                       title="Copy key"
                       disabled={!ready || isSubmitting}
                       onClick={handleCopy}
                     >
-                      <Copy />
+                      <Copy className="h-4 w-4" />
                     </Button>
                   </div>
                   <FieldDescription>{helpText}</FieldDescription>
@@ -182,7 +206,7 @@ export const SetupScreen = () => {
 
               <div
                 aria-live="polite"
-                className="rounded-md border border-border bg-muted/45 px-4 py-3 text-sm text-muted-foreground"
+                className="flex items-center rounded-xl border border-border/60 bg-muted/45 px-5 py-4 text-sm text-muted-foreground shadow-inner"
               >
                 {ready
                   ? "Setup stays in the browser session only."

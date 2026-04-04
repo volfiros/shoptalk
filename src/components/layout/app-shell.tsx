@@ -15,7 +15,7 @@ export const AppShell = ({
     <div className={cn("min-h-screen bg-background", className)}>
       <div
         className={cn(
-          "mx-auto flex min-h-screen w-full max-w-6xl flex-col px-6 py-8 sm:px-8 lg:px-10",
+          "mx-auto flex min-h-screen w-full max-w-5xl flex-col px-6 py-12 sm:px-8 lg:px-10",
           contentClassName
         )}
       >

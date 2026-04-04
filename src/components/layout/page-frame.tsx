@@ -5,22 +5,24 @@ type PageFrameProps = {
   description: string;
   children: React.ReactNode;
   className?: string;
+  headerClassName?: string;
 };
 
 export const PageFrame = ({
   title,
   description,
   children,
-  className
+  className,
+  headerClassName
 }: PageFrameProps) => {
   return (
-    <main className={cn("flex flex-1 flex-col gap-8", className)}>
-      <header className="max-w-3xl border-b border-border pb-6">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-3xl font-semibold tracking-[-0.02em] text-foreground sm:text-4xl">
+    <main className={cn("flex flex-1 flex-col gap-10", className)}>
+      <header className={cn("max-w-3xl pb-2", headerClassName)}>
+        <div className="flex flex-col gap-3">
+          <h1 className="bg-gradient-to-r from-foreground to-muted-foreground bg-clip-text text-4xl font-bold tracking-tight text-transparent sm:text-5xl">
             {title}
           </h1>
-          <p className="text-base leading-7 text-muted-foreground">{description}</p>
+          <p className="text-lg leading-relaxed text-muted-foreground">{description}</p>
         </div>
       </header>
       {children}

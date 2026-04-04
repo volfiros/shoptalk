@@ -194,13 +194,13 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
   return (
     <AppShell
       className="h-[100dvh] overflow-hidden"
-      contentClassName="h-full min-h-0 max-w-[92rem] px-4 py-3 sm:px-6 lg:px-8"
+      contentClassName="flex h-full min-h-0 max-w-7xl flex-col px-4 py-4 sm:px-6 lg:px-8"
     >
-      <main className="flex h-full min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+      <main className="relative flex h-full min-h-0 flex-1 flex-col gap-6 overflow-hidden">
         <div className="z-20 flex justify-center">
           <div
             ref={settingsPanelRef}
-            className="relative w-full max-w-3xl rounded-lg border border-border bg-surface/95 px-4 py-3 shadow-[0_6px_20px_rgba(54,46,31,0.08)] backdrop-blur-sm"
+            className="relative w-full max-w-3xl rounded-2xl border border-border/60 bg-surface/85 px-6 py-4 shadow-[0_16px_40px_rgba(15,23,42,0.08)] backdrop-blur-xl transition-all"
           >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 flex-1">
@@ -225,11 +225,12 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
                   type="button"
                   variant="outline"
                   size="icon-sm"
+                  className="h-10 w-10 rounded-xl"
                   aria-label="Open chat settings"
                   title="Settings"
                   onClick={isSettingsOpen ? closeSettings : openSettings}
                 >
-                  <Settings2 />
+                  <Settings2 className="h-5 w-5" />
                 </Button>
               </div>
             </div>
@@ -242,7 +243,7 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
               </div>
             ) : null}
             {isSettingsOpen ? (
-              <div className="absolute right-4 top-[calc(100%+0.75rem)] z-30 w-[min(26rem,calc(100vw-3rem))] rounded-xl border border-border bg-surface p-4 shadow-[0_14px_40px_rgba(54,46,31,0.12)]">
+              <div className="absolute right-4 top-[calc(100%+0.75rem)] z-30 w-[min(26rem,calc(100vw-3rem))] rounded-2xl border border-border/60 bg-surface p-6 shadow-[0_20px_48px_rgba(15,23,42,0.12)] backdrop-blur-xl">
                 <div className="flex flex-col gap-4">
                   <div className="flex flex-col gap-1">
                     <p className="text-sm font-medium text-foreground">
@@ -305,7 +306,7 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
               className="h-full overflow-y-auto px-2 py-2 sm:px-4"
             >
               {messages.length > 0 ? (
-                <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
+                <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 pb-20">
                   {messages.map((message) => (
                     <div
                       key={message.id}
@@ -314,14 +315,14 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
                       }`}
                     >
                       <article
-                        className={`max-w-[min(42rem,82%)] rounded-2xl border px-5 py-4 shadow-[0_4px_14px_rgba(54,46,31,0.05)] ${
+                        className={`max-w-[min(38rem,85%)] rounded-2xl px-6 py-4 shadow-sm transition-all ${
                           message.role === "user"
-                            ? "border-primary/25 bg-primary text-primary-foreground"
-                            : "border-border bg-surface text-foreground"
+                            ? "rounded-br-sm bg-primary text-primary-foreground"
+                            : "rounded-bl-sm border border-border/60 bg-surface text-foreground shadow-[0_10px_24px_rgba(15,23,42,0.06)]"
                         }`}
                       >
                         <p
-                          className={`text-[15px] leading-7 whitespace-pre-wrap ${
+                          className={`text-[15px] leading-relaxed whitespace-pre-wrap ${
                             message.role === "user"
                               ? "text-primary-foreground"
                               : "text-foreground"
@@ -340,13 +341,21 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
                 </div>
               ) : (
                 <div className="flex h-full min-h-[28rem] items-center justify-center">
-                  <div className="w-full max-w-md rounded-2xl border border-border bg-surface px-6 py-6 text-center shadow-[0_8px_24px_rgba(54,46,31,0.06)]">
-                    <p className="text-base font-medium text-foreground">Try a prompt</p>
-                    <div className="mt-4 flex flex-col gap-2 text-left">
+                  <div className="w-full max-w-lg rounded-3xl border border-border/60 bg-surface/80 px-8 py-10 text-center shadow-[0_18px_48px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+                    <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-accent text-accent-foreground">
+                      <Settings2 className="h-6 w-6" />
+                    </div>
+                    <p className="text-xl font-semibold tracking-tight text-foreground">
+                      Welcome to Shop Talk
+                    </p>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Start speaking or click one of the examples below to try it out.
+                    </p>
+                    <div className="mt-8 flex flex-col gap-3 text-left">
                       {EMPTY_PROMPTS.map((prompt) => (
                         <div
                           key={prompt}
-                          className="rounded-lg border border-border bg-background px-4 py-3 text-sm leading-6 text-muted-foreground"
+                          className="group cursor-pointer rounded-xl border border-border/60 bg-background px-5 py-4 text-sm leading-6 text-muted-foreground transition-all hover:bg-muted/60"
                         >
                           {prompt}
                         </div>
@@ -359,8 +368,8 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
           </div>
         </section>
 
-        <div className="z-20 flex justify-center px-2 pb-2 sm:px-4 sm:pb-3">
-          <section className="w-full max-w-4xl rounded-2xl border border-border bg-surface px-4 py-4 shadow-[0_10px_28px_rgba(54,46,31,0.08)]">
+        <div className="z-20 flex justify-center px-4 pb-6 sm:px-6 sm:pb-8">
+          <section className="w-full max-w-3xl rounded-3xl border border-border/60 bg-surface/85 px-6 py-5 shadow-[0_18px_40px_rgba(15,23,42,0.08)] backdrop-blur-xl transition-all">
             <div className="flex flex-col gap-4">
               <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-end">
                 <div className="flex flex-col gap-2">
@@ -376,7 +385,7 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
                       isLoadingMicrophones ||
                       microphoneDevices.length === 0
                     }
-                    className="h-11 rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="h-10 w-full appearance-none rounded-lg border border-border/60 bg-background px-3 text-sm text-foreground shadow-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {microphoneDevices.length === 0 ? (
                       <option value="">
@@ -393,7 +402,7 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
                     )}
                   </select>
                 </div>
-                <div className="rounded-lg border border-border bg-background px-3 py-3 text-sm text-muted-foreground">
+                <div className="flex items-center rounded-xl border border-border/60 bg-muted/45 px-4 py-3 text-sm text-muted-foreground shadow-inner">
                   {statusCopy}
                 </div>
               </div>
