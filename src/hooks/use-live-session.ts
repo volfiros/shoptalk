@@ -205,7 +205,10 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   const lastSpeechAtRef = useRef<number | null>(null);
   const shouldCloseAfterAssistantTurnRef = useRef(false);
   const pendingStartChatRef = useRef(false);
+  const pendingStartChatAllowDuringAssistantResponseRef = useRef(false);
   const pendingTextPromptRef = useRef<string | null>(null);
+  const shouldStartListeningAfterAssistantTurnRef = useRef(false);
+  const startListeningRef = useRef<((options?: { allowWhileAssistantResponding?: boolean }) => Promise<void>) | null>(null);
 
   const persistMicrophoneId = (deviceId: string) => {
     if (typeof window === "undefined") {
@@ -538,7 +541,9 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       sessionIsOpenRef.current = false;
       shouldSendAudioStreamEndRef.current = false;
       pendingStartChatRef.current = false;
+      pendingStartChatAllowDuringAssistantResponseRef.current = false;
       pendingTextPromptRef.current = null;
+      shouldStartListeningAfterAssistantTurnRef.current = false;
       setShouldConnect(false);
       setIsSessionReady(false);
 
@@ -846,9 +851,16 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
                     mode: "merge-transcript"
                   }
                 );
+              }
 
-                if (Boolean(message.serverContent.outputTranscription.finished)) {
-                  finalizeDraftMessage("assistant");
+              if (message.serverContent?.generationComplete) {
+                finalizeDraftMessage("assistant");
+
+                if (shouldStartListeningAfterAssistantTurnRef.current) {
+                  shouldStartListeningAfterAssistantTurnRef.current = false;
+                  void startListeningRef.current?.({
+                    allowWhileAssistantResponding: true
+                  });
                 }
               }
 
@@ -903,16 +915,25 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     upsertDraftMessage
   ]);
 
-  const startListening = useCallback(async () => {
+  const startListening = useCallback(async (options?: {
+    allowWhileAssistantResponding?: boolean;
+  }) => {
+    const allowWhileAssistantResponding =
+      options?.allowWhileAssistantResponding ?? false;
+
     if (
-      voiceState !== "idle" ||
-      isChatActive
+      isChatActive ||
+      (
+        voiceState !== "idle" &&
+        !(allowWhileAssistantResponding && voiceState === "assistant-responding")
+      )
     ) {
       return;
     }
 
     if (!sessionRef.current) {
       pendingStartChatRef.current = true;
+      pendingStartChatAllowDuringAssistantResponseRef.current = allowWhileAssistantResponding;
       setShouldConnect(true);
       return;
     }
@@ -970,7 +991,10 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       inputSilenceNodeRef.current = inputSilenceNode;
       setIsChatActive(true);
       setErrorMessage(null);
-      setVoiceState("idle");
+
+      if (!(allowWhileAssistantResponding && currentVoiceStateRef.current === "assistant-responding")) {
+        setVoiceState("idle");
+      }
 
       inputProcessorNode.onaudioprocess = (event) => {
         const activeSession = sessionRef.current;
@@ -1091,18 +1115,31 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     voiceState
   ]);
 
-  const sendTextPrompt = useCallback((prompt: string) => {
+  useEffect(() => {
+    startListeningRef.current = startListening;
+  }, [startListening]);
+
+  const sendTextPrompt = useCallback((
+    prompt: string,
+    options?: {
+      startListeningAfterAssistantReply?: boolean;
+    }
+  ) => {
     const nextPrompt = prompt.trim();
 
     if (!nextPrompt) {
       return;
     }
 
+    shouldStartListeningAfterAssistantTurnRef.current =
+      options?.startListeningAfterAssistantReply ?? false;
+
     if (sessionRef.current && isSessionWritable(sessionRef.current)) {
       try {
         dispatchTextPrompt(sessionRef.current, nextPrompt);
         return;
       } catch (error) {
+        shouldStartListeningAfterAssistantTurnRef.current = false;
         void shutdownLiveSession(
           error instanceof Error
             ? error.message
@@ -1117,17 +1154,24 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   }, [dispatchTextPrompt, shutdownLiveSession]);
 
   useEffect(() => {
+    const allowWhileAssistantResponding =
+      pendingStartChatAllowDuringAssistantResponseRef.current;
+
     if (
       !pendingStartChatRef.current ||
       !sessionRef.current ||
-      voiceState !== "idle" ||
-      isChatActive
+      isChatActive ||
+      (
+        voiceState !== "idle" &&
+        !(allowWhileAssistantResponding && voiceState === "assistant-responding")
+      )
     ) {
       return;
     }
 
     pendingStartChatRef.current = false;
-    void startListening();
+    pendingStartChatAllowDuringAssistantResponseRef.current = false;
+    void startListening({ allowWhileAssistantResponding });
   }, [isChatActive, startListening, voiceState]);
 
   useEffect(() => {

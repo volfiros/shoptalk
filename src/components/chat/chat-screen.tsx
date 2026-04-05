@@ -97,9 +97,10 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
   }, [isSavingKey, value]);
 
   const handleEmptyPromptSelect = useCallback((prompt: string) => {
-    sendTextPrompt(prompt);
-    void startListening();
-  }, [sendTextPrompt, startListening]);
+    sendTextPrompt(prompt, {
+      startListeningAfterAssistantReply: true
+    });
+  }, [sendTextPrompt]);
 
   const getMessageAnimationClassName = (messageId: string, role: "user" | "assistant") => {
     if (animatedMessageIdsRef.current.has(messageId)) {
@@ -393,7 +394,9 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
             <>
               <Button
                 size="sm"
-                onClick={startListening}
+                onClick={() => {
+                  void startListening();
+                }}
                 loading={voiceState === "connecting"}
                 disabled={voiceState !== "idle"}
               >
