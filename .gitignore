@@ -49,3 +49,7 @@ GEMINI.md
 .codex/
 .cursor/
 .windsurf/
+
+# local planning/spec files
+.plan/
+docs/superpowers/specs/
