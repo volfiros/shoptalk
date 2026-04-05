@@ -3,6 +3,7 @@
 import { startTransition, useMemo, useState } from "react";
 import { Clipboard, Copy, X } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { AppShell } from "@/components/layout/app-shell";
 import { PageFrame } from "@/components/layout/page-frame";
 import { SurfacePanel } from "@/components/layout/surface-panel";
@@ -140,6 +141,9 @@ export const SetupScreen = () => {
 
   return (
     <AppShell>
+      <div className="absolute right-4 top-4 sm:right-6 sm:top-6">
+        <ThemeToggle />
+      </div>
       <PageFrame
         title="Add your Gemini key"
         description="Use your Gemini API key to start a local voice support session and continue into the chat interface."

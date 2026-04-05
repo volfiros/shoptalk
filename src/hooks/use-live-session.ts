@@ -167,6 +167,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [isChatActive, setIsChatActive] = useState(false);
   const [shouldConnect, setShouldConnect] = useState(false);
+  const [isSessionReady, setIsSessionReady] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoadingMicrophones, setIsLoadingMicrophones] = useState(true);
@@ -303,9 +304,8 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     appendMessage("user", prompt);
     setErrorMessage(null);
     setVoiceState("assistant-responding");
-    session.sendClientContent({
-      turns: prompt,
-      turnComplete: true
+    session.sendRealtimeInput({
+      text: prompt
     });
   }, [appendMessage]);
 
@@ -540,6 +540,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       pendingStartChatRef.current = false;
       pendingTextPromptRef.current = null;
       setShouldConnect(false);
+      setIsSessionReady(false);
 
       await closeAudioInput();
 
@@ -787,9 +788,10 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
                 return;
               }
 
-              if (message.setupComplete?.sessionId) {
+              if (message.setupComplete) {
+                setIsSessionReady(true);
                 setSessionInfo({
-                  sessionId: message.setupComplete.sessionId,
+                  sessionId: message.setupComplete.sessionId ?? null,
                   model: payload.model,
                   voice: payload.voice
                 });
@@ -1132,6 +1134,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     if (
       !pendingTextPromptRef.current ||
       !sessionRef.current ||
+      !isSessionReady ||
       voiceState !== "idle"
     ) {
       return;
@@ -1151,7 +1154,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
         );
       }
     }
-  }, [dispatchTextPrompt, shutdownLiveSession, voiceState]);
+  }, [dispatchTextPrompt, isSessionReady, shutdownLiveSession, voiceState]);
 
   const updateSelectedMicrophoneId = (deviceId: string) => {
     setSelectedMicrophoneId(deviceId);

@@ -1,14 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Settings2 } from "lucide-react";
+import { Mic, Settings2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { PageFrame } from "@/components/layout/page-frame";
-import { SurfacePanel } from "@/components/layout/surface-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LoadingDots } from "@/components/ui/loading-dots";
+import { SkeletonPanel, SkeletonMessage } from "@/components/ui/skeleton";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { VoiceIndicator } from "@/components/ui/voice-indicator";
 import { useLiveSession } from "@/hooks/use-live-session";
 import { useSessionValue } from "@/hooks/use-session-value";
 import {
@@ -28,26 +31,21 @@ const EMPTY_PROMPTS = [
   "What is the refund policy?"
 ] as const;
 
-const EMPTY_PROMPT_BUTTON_CLASS_NAME =
-  "group rounded-xl border border-border/60 bg-background px-4 py-2.5 text-left text-[13px] leading-relaxed text-muted-foreground transition-all hover:bg-muted/60 focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 sm:px-5 sm:py-4 sm:text-sm sm:leading-6";
-
 type EmptyPromptButtonProps = {
   prompt: string;
   disabled: boolean;
-  hideOnMobile?: boolean;
   onSelect: (prompt: string) => void;
 };
 
 const EmptyPromptButton = ({
   prompt,
   disabled,
-  hideOnMobile = false,
   onSelect
 }: EmptyPromptButtonProps) => {
   return (
     <button
       type="button"
-      className={`${EMPTY_PROMPT_BUTTON_CLASS_NAME} ${hideOnMobile ? "hidden sm:block" : "block"}`}
+      className="rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-left text-sm text-muted-foreground transition-all duration-150 hover:bg-muted/60 hover:border-primary/30 hover:text-foreground focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.98]"
       disabled={disabled}
       onClick={() => onSelect(prompt)}
     >
@@ -60,6 +58,7 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
   const router = useRouter();
   const transcriptViewportRef = useRef<HTMLDivElement | null>(null);
   const settingsPanelRef = useRef<HTMLDivElement | null>(null);
+  const animatedMessageIdsRef = useRef<Set<string>>(new Set());
   const { ready, value, setValue } = useSessionValue(GEMINI_API_KEY_STORAGE_KEY);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [draftApiKey, setDraftApiKey] = useState("");
@@ -99,25 +98,44 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
 
   const handleEmptyPromptSelect = useCallback((prompt: string) => {
     sendTextPrompt(prompt);
-  }, [sendTextPrompt]);
+    void startListening();
+  }, [sendTextPrompt, startListening]);
+
+  const getMessageAnimationClassName = (messageId: string, role: "user" | "assistant") => {
+    if (animatedMessageIdsRef.current.has(messageId)) {
+      return "";
+    }
+
+    animatedMessageIdsRef.current.add(messageId);
+    return role === "user" ? "animate-slide-in-left" : "animate-slide-in-right";
+  };
+
 
   const microphoneSelectionDisabled =
     isChatActive ||
     voiceState === "connecting" ||
     voiceState === "listening" ||
     voiceState === "assistant-responding";
-  const statusCopy =
-    voiceState === "connecting"
-      ? "Connecting the live session."
-      : voiceState === "listening"
-        ? "Listening now. Keep talking and the turn will end automatically."
-        : voiceState === "assistant-responding"
-          ? "Assistant is responding. Start speaking to interrupt immediately."
-          : voiceState === "error"
-            ? "The session needs attention before recording can continue."
-            : isChatActive
-              ? "Chat is live. Start speaking whenever you need help."
-              : "Ready to start a live voice chat.";
+
+  const getStatusCopy = () => {
+    switch (voiceState) {
+      case "connecting":
+        return (
+          <span className="flex items-center gap-2">
+            Connecting
+            <LoadingDots size="sm" />
+          </span>
+        );
+      case "listening":
+        return "Listening...";
+      case "assistant-responding":
+        return "Responding...";
+      case "error":
+        return "Error occurred";
+      default:
+        return isChatActive ? "Ready" : "Idle";
+    }
+  };
 
   useEffect(() => {
     if (ready && !value) {
@@ -133,7 +151,8 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
     }
 
     transcriptViewport.scrollTo({
-      top: transcriptViewport.scrollHeight
+      top: transcriptViewport.scrollHeight,
+      behavior: "smooth"
     });
   }, [messages]);
 
@@ -207,266 +226,188 @@ export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
   if (!ready || !value) {
     return (
       <AppShell contentClassName="max-w-[90rem]">
-      <PageFrame
-        title="Loading chat"
-        description="Checking the browser session before the chat view loads."
-      >
-        <SurfacePanel
-          title="Preparing session"
-            description="If no Gemini key is available in this browser session, the app will return to the setup screen."
-          >
-            <p className="text-sm leading-6 text-muted-foreground">
-              Verifying session state...
-            </p>
-          </SurfacePanel>
+        <PageFrame
+          title="Loading chat"
+          description="Checking the browser session before the chat view loads."
+        >
+          <SkeletonPanel />
         </PageFrame>
       </AppShell>
     );
   }
 
   return (
-    <AppShell
-      className="h-[100dvh] overflow-hidden"
-      contentClassName="flex h-full min-h-0 max-w-7xl flex-col px-4 py-4 sm:px-6 lg:px-8"
-    >
-      <main className="relative flex h-full min-h-0 flex-1 flex-col gap-6 overflow-hidden">
-        <div className="z-20 flex justify-center">
-          <div
-            ref={settingsPanelRef}
-            className="relative w-full max-w-3xl rounded-2xl border border-border/60 bg-surface/85 px-6 py-4 shadow-[0_16px_40px_rgba(15,23,42,0.08)] backdrop-blur-xl transition-all"
+    <div className="flex h-[100dvh] flex-col bg-background">
+      <header
+        ref={settingsPanelRef}
+        className="relative z-20 flex items-center justify-between border-b border-border/50 bg-surface/80 px-3 py-2 backdrop-blur-lg sm:px-4"
+      >
+        <div className="flex items-center gap-3">
+          <VoiceIndicator state={voiceState} size="sm" />
+          <div className="text-sm">
+            <span className="font-medium capitalize text-foreground">{voiceState.replace("-", " ")}</span>
+            <span className="ml-2 text-muted-foreground hidden sm:inline">
+              {sessionInfo.model} · {sessionInfo.voice}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <ThemeToggle className="h-8 w-8" />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="h-8 w-8"
+            aria-label="Open chat settings"
+            title="Settings"
+            onClick={isSettingsOpen ? closeSettings : openSettings}
           >
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0 flex-1">
-                <div
-                  aria-live="polite"
-                  className="text-sm text-foreground"
-                >
-                  <span className="font-medium capitalize">{voiceState}</span>
-                  <span className="text-muted-foreground">
-                    {" "}
-                    · {sessionInfo.model} · {sessionInfo.voice}
-                  </span>
-                </div>
-                <div className="mt-1 text-sm text-muted-foreground">
-                  {sessionInfo.sessionId
-                    ? `Session ${sessionInfo.sessionId}`
-                    : `${orderCount} orders available`}
-                </div>
-              </div>
-              <div className="flex items-start justify-end">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon-sm"
-                  className="h-10 w-10 rounded-xl"
-                  aria-label="Open chat settings"
-                  title="Settings"
-                  onClick={isSettingsOpen ? closeSettings : openSettings}
-                >
-                  <Settings2 className="h-5 w-5" />
+            <Settings2 className="h-4 w-4" />
+          </Button>
+        </div>
+        {isSettingsOpen ? (
+          <div className="animate-slide-down absolute right-2 top-full z-30 mt-2 w-[min(24rem,calc(100vw-1rem))] rounded-xl border border-border/60 bg-surface p-4 shadow-xl backdrop-blur-xl dark:shadow-black/30">
+            <div className="flex flex-col gap-3">
+              <p className="text-sm font-medium text-foreground">Update API key</p>
+              <Input
+                type="password"
+                value={draftApiKey}
+                onChange={(event) => {
+                  setDraftApiKey(event.target.value);
+                  setSettingsError(null);
+                }}
+                autoComplete="off"
+                placeholder="Paste your Gemini API key"
+                disabled={isSavingKey}
+              />
+              {settingsError ? (
+                <p className="text-xs text-destructive">{settingsError}</p>
+              ) : null}
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" size="sm" onClick={closeSettings} disabled={isSavingKey}>
+                  Cancel
+                </Button>
+                <Button size="sm" loading={isSavingKey} onClick={() => void saveApiKey()}>
+                  Save
                 </Button>
               </div>
             </div>
-            {errorMessage ? (
-              <div className="mt-3 flex flex-col gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-3 text-sm text-foreground sm:flex-row sm:items-center sm:justify-between">
-                <p>{errorMessage}</p>
-                <Button variant="outline" onClick={retryConnection}>
-                  Retry connection
-                </Button>
-              </div>
-            ) : null}
-            {isSettingsOpen ? (
-              <div className="absolute right-4 top-[calc(100%+0.75rem)] z-30 w-[min(26rem,calc(100vw-3rem))] rounded-2xl border border-border/60 bg-surface p-6 shadow-[0_20px_48px_rgba(15,23,42,0.12)] backdrop-blur-xl">
-                <div className="flex flex-col gap-4">
-                  <div className="flex flex-col gap-1">
-                    <p className="text-sm font-medium text-foreground">
-                      Gemini API key
-                    </p>
-                    <p className="text-sm leading-6 text-muted-foreground">
-                      Update the key for this browser session and reconnect the chat with the new value.
-                    </p>
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <Label htmlFor="chat-settings-api-key">Gemini API key</Label>
-                    <Input
-                      id="chat-settings-api-key"
-                      type="password"
-                      value={draftApiKey}
-                      onChange={(event) => {
-                        setDraftApiKey(event.target.value);
-                        setSettingsError(null);
-                      }}
-                      autoComplete="off"
-                      placeholder="Paste your Gemini API key"
-                      disabled={isSavingKey}
-                    />
-                  </div>
-                  {settingsError ? (
-                    <p className="text-sm text-destructive">{settingsError}</p>
-                  ) : null}
-                  <div className="flex justify-end gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={closeSettings}
-                      disabled={isSavingKey}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      type="button"
-                      onClick={() => {
-                        void saveApiKey();
-                      }}
-                      disabled={isSavingKey}
-                    >
-                      {isSavingKey ? "Saving..." : "Save"}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            ) : null}
           </div>
-        </div>
+        ) : null}
+      </header>
 
-        <section className="relative flex min-h-0 flex-1 justify-center overflow-hidden">
-          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center">
-            <div className="h-0.5 w-full max-w-[84rem] bg-linear-to-b from-background/85 to-transparent" />
-          </div>
-          <div className="flex w-full max-w-[84rem] flex-1 flex-col">
-            <div
-              ref={transcriptViewportRef}
-              className="h-full overflow-y-auto px-2 py-2 sm:px-4"
-            >
-              {messages.length > 0 ? (
-                <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 pb-20">
-                  {messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={`flex w-full ${
-                        message.role === "user" ? "justify-end" : "justify-start"
-                      }`}
-                    >
-                      <article
-                        className={`max-w-[min(38rem,85%)] rounded-2xl px-6 py-4 shadow-sm transition-all ${
-                          message.role === "user"
-                            ? "rounded-br-sm bg-primary text-primary-foreground"
-                            : "rounded-bl-sm border border-border/60 bg-surface text-foreground shadow-[0_10px_24px_rgba(15,23,42,0.06)]"
-                        }`}
-                      >
-                        <p
-                          className={`text-[15px] leading-relaxed whitespace-pre-wrap ${
-                            message.role === "user"
-                              ? "text-primary-foreground"
-                              : "text-foreground"
-                          }`}
-                        >
-                          {message.body}
-                        </p>
-                        {message.role === "assistant" && message.wasInterrupted ? (
-                          <p className="mt-2 text-xs font-medium text-muted-foreground">
-                            Interrupted
-                          </p>
-                        ) : null}
-                      </article>
-                    </div>
+      {errorMessage ? (
+        <div className="flex items-center justify-between gap-3 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-sm">
+          <p className="text-foreground">{errorMessage}</p>
+          <Button variant="outline" size="xs" onClick={retryConnection}>
+            Reset session
+          </Button>
+        </div>
+      ) : null}
+
+      <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div
+          ref={transcriptViewportRef}
+          className="flex-1 overflow-y-auto px-3 py-4 sm:px-6"
+        >
+          {voiceState === "connecting" && messages.length === 0 ? (
+            <div className="mx-auto flex max-w-2xl flex-col gap-3">
+              <SkeletonMessage align="right" />
+              <SkeletonMessage align="left" />
+            </div>
+          ) : messages.length > 0 ? (
+            <div className="mx-auto flex max-w-2xl flex-col gap-3 pb-4">
+              {messages.map((message) => (
+                <div
+                  key={message.id}
+                  className={`flex w-full ${
+                    message.role === "user" ? "justify-end" : "justify-start"
+                  } ${getMessageAnimationClassName(message.id, message.role)}`}
+                >
+                  <article
+                    className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                      message.role === "user"
+                        ? "rounded-br-md bg-primary text-primary-foreground"
+                        : "rounded-bl-md border border-border/50 bg-surface text-foreground"
+                    }`}
+                  >
+                    <p className="whitespace-pre-wrap">{message.body}</p>
+                    {message.role === "assistant" && message.wasInterrupted ? (
+                      <p className="mt-1.5 text-xs text-muted-foreground">Interrupted</p>
+                    ) : null}
+                  </article>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex h-full items-center justify-center">
+              <div className="w-full max-w-sm text-center">
+                <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <Mic className="h-5 w-5" />
+                </div>
+                <p className="text-base font-medium text-foreground">Shop Talk</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Voice assistant for orders & support
+                </p>
+                <div className="mt-4 flex flex-col gap-2">
+                  {EMPTY_PROMPTS.map((prompt) => (
+                    <EmptyPromptButton
+                      key={prompt}
+                      prompt={prompt}
+                      disabled={voiceState !== "idle"}
+                      onSelect={handleEmptyPromptSelect}
+                    />
                   ))}
                 </div>
-              ) : (
-                <div className="flex h-full min-h-0 sm:min-h-[28rem] items-center justify-center">
-                  <div className="w-full max-w-lg rounded-3xl border border-border/60 bg-surface/80 px-4 py-5 sm:px-8 sm:py-10 text-center shadow-[0_18px_48px_rgba(15,23,42,0.08)] backdrop-blur-xl">
-                    <div className="mx-auto mb-2.5 sm:mb-4 flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-full bg-accent text-accent-foreground">
-                      <Settings2 className="h-5 w-5 sm:h-6 sm:w-6" />
-                    </div>
-                    <p className="text-lg sm:text-xl font-semibold tracking-tight text-foreground">
-                      Welcome to Shop Talk
-                    </p>
-                    <p className="mt-1 sm:mt-2 text-[13px] sm:text-sm text-muted-foreground">
-                      Start speaking or click one of the examples below to try it out.
-                    </p>
-                    <div className="mt-4 sm:mt-8 flex flex-col gap-2 sm:gap-3 text-left">
-                      {EMPTY_PROMPTS.map((prompt, index) => (
-                        <EmptyPromptButton
-                          key={prompt}
-                          prompt={prompt}
-                          disabled={voiceState !== "idle"}
-                          hideOnMobile={index === 2}
-                          onSelect={handleEmptyPromptSelect}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-
-        <div className="z-20 flex justify-center px-4 pb-6 sm:px-6 sm:pb-8">
-          <section className="w-full max-w-3xl rounded-3xl border border-border/60 bg-surface/85 px-6 py-5 shadow-[0_18px_40px_rgba(15,23,42,0.08)] backdrop-blur-xl transition-all">
-            <div className="flex flex-col gap-4">
-              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-end">
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="microphone-device">Microphone</Label>
-                  <select
-                    id="microphone-device"
-                    value={selectedMicrophoneId}
-                    onChange={(event) => {
-                      updateSelectedMicrophoneId(event.target.value);
-                    }}
-                    disabled={
-                      microphoneSelectionDisabled ||
-                      isLoadingMicrophones ||
-                      microphoneDevices.length === 0
-                    }
-                    className="h-10 w-full appearance-none rounded-lg border border-border/60 bg-background px-3 text-sm text-foreground shadow-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {microphoneDevices.length === 0 ? (
-                      <option value="">
-                        {isLoadingMicrophones
-                          ? "Loading microphones..."
-                          : "No microphone found"}
-                      </option>
-                    ) : (
-                      microphoneDevices.map((device) => (
-                        <option key={device.deviceId} value={device.deviceId}>
-                          {device.label}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                </div>
-                <div className="flex items-center rounded-xl border border-border/60 bg-muted/45 px-4 py-3 text-sm text-muted-foreground shadow-inner">
-                  {statusCopy}
-                </div>
               </div>
-              {isChatActive ? (
-                <div className="flex flex-col gap-2 sm:flex-row sm:justify-center">
-                  <Button variant="outline" onClick={endConversation}>
-                    End chat
-                  </Button>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2 sm:flex-row sm:justify-center">
-                  <Button
-                    onClick={startListening}
-                    disabled={voiceState !== "idle"}
-                  >
-                    {voiceState === "connecting" ? "Connecting..." : "Start chat"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={endConversation}
-                    disabled={messages.length === 0}
-                  >
-                    End chat
-                  </Button>
-                </div>
-              )}
             </div>
-          </section>
+          )}
         </div>
       </main>
-    </AppShell>
+
+      <footer className="z-20 border-t border-border/50 bg-surface/80 px-3 py-3 backdrop-blur-lg sm:px-4">
+        <div className="mx-auto flex max-w-2xl items-center gap-3">
+          <select
+            id="microphone-device"
+            value={selectedMicrophoneId}
+            onChange={(event) => updateSelectedMicrophoneId(event.target.value)}
+            disabled={microphoneSelectionDisabled || isLoadingMicrophones || microphoneDevices.length === 0}
+            className="h-9 min-w-0 flex-1 appearance-none truncate rounded-lg border border-border/50 bg-background px-3 text-sm outline-none transition-colors focus-visible:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {microphoneDevices.length === 0 ? (
+              <option value="">{isLoadingMicrophones ? "Loading..." : "No mic"}</option>
+            ) : (
+              microphoneDevices.map((device) => (
+                <option key={device.deviceId} value={device.deviceId}>
+                  {device.label}
+                </option>
+              ))
+            )}
+          </select>
+          <div className="hidden text-xs text-muted-foreground sm:block">{getStatusCopy()}</div>
+          {isChatActive ? (
+            <Button variant="outline" size="sm" onClick={endConversation}>
+              End
+            </Button>
+          ) : (
+            <>
+              <Button
+                size="sm"
+                onClick={startListening}
+                loading={voiceState === "connecting"}
+                disabled={voiceState !== "idle"}
+              >
+                Start
+              </Button>
+              {messages.length > 0 && (
+                <Button variant="ghost" size="sm" onClick={endConversation}>
+                  Clear
+                </Button>
+              )}
+            </>
+          )}
+        </div>
+      </footer>
+    </div>
   );
 };

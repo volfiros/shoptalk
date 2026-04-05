@@ -7,12 +7,18 @@ type SessionBody = {
   apiKey?: string;
 };
 
+const GEMINI_HTTP_OPTIONS = {
+  apiVersion: "v1alpha",
+  timeout: 12000,
+  retryOptions: {
+    attempts: 1
+  }
+} as const;
+
 const buildClient = (apiKey: string) => {
   return new GoogleGenAI({
     apiKey,
-    httpOptions: {
-      apiVersion: "v1alpha"
-    }
+    httpOptions: GEMINI_HTTP_OPTIONS
   });
 };
 
@@ -42,9 +48,7 @@ export const POST = async (request: Request) => {
           model: LIVE_MODEL,
           config: LIVE_SESSION_CONFIG
         },
-        httpOptions: {
-          apiVersion: "v1alpha"
-        }
+        httpOptions: GEMINI_HTTP_OPTIONS
       }
     });
 

@@ -6,12 +6,18 @@ type ValidateBody = {
   apiKey?: string;
 };
 
+const GEMINI_HTTP_OPTIONS = {
+  apiVersion: "v1alpha",
+  timeout: 12000,
+  retryOptions: {
+    attempts: 1
+  }
+} as const;
+
 const buildClient = (apiKey: string) => {
   return new GoogleGenAI({
     apiKey,
-    httpOptions: {
-      apiVersion: "v1alpha"
-    }
+    httpOptions: GEMINI_HTTP_OPTIONS
   });
 };
 
@@ -38,9 +44,7 @@ export const POST = async (request: Request) => {
         uses: 1,
         expireTime: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
         newSessionExpireTime: new Date(Date.now() + 60 * 1000).toISOString(),
-        httpOptions: {
-          apiVersion: "v1alpha"
-        }
+        httpOptions: GEMINI_HTTP_OPTIONS
       }
     });
 
