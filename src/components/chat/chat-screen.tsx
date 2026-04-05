@@ -7,7 +7,6 @@ import { AppShell } from "@/components/layout/app-shell";
 import { PageFrame } from "@/components/layout/page-frame";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { LoadingDots } from "@/components/ui/loading-dots";
 import { SkeletonPanel, SkeletonMessage } from "@/components/ui/skeleton";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
@@ -20,10 +19,6 @@ import {
   getGeminiValidationErrorMessage,
   validateGeminiApiKey
 } from "@/lib/session";
-
-type ChatScreenProps = {
-  orderCount: number;
-};
 
 const EMPTY_PROMPTS = [
   "Where is my order?",
@@ -54,7 +49,7 @@ const EmptyPromptButton = ({
   );
 };
 
-export const ChatScreen = ({ orderCount }: ChatScreenProps) => {
+export const ChatScreen = () => {
   const router = useRouter();
   const transcriptViewportRef = useRef<HTMLDivElement | null>(null);
   const settingsPanelRef = useRef<HTMLDivElement | null>(null);
