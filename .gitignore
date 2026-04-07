@@ -53,3 +53,4 @@ GEMINI.md
 # local planning/spec files
 .plan/
 docs/superpowers/specs/
+.worktrees/
