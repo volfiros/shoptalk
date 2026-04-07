@@ -70,7 +70,7 @@ const createId = () => {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 };
 
-const MICROPHONE_STORAGE_KEY = "shop-talk-microphone-id";
+const MICROPHONE_STORAGE_KEY = "shoptalk-microphone-id";
 const INTERRUPTION_SAMPLE_THRESHOLD = 0.018;
 const USER_TURN_SILENCE_MS = 1400;
 

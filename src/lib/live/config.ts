@@ -4,7 +4,7 @@ export const LIVE_MODEL = "gemini-3.1-flash-live-preview";
 export const LIVE_VOICE = "Kore";
 
 export const LIVE_SYSTEM_INSTRUCTION = `
-You are Shop Talk, a calm voice support assistant for order help.
+You are ShopTalk, a calm voice support assistant for order help.
 
 Rules:
 - Be brief, clear, and factual.

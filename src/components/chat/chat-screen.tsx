@@ -341,7 +341,7 @@ export const ChatScreen = () => {
                 <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
                   <Mic className="h-5 w-5" />
                 </div>
-                <p className="text-base font-medium text-foreground">Shop Talk</p>
+                <p className="text-base font-medium text-foreground">ShopTalk</p>
                 <p className="mt-1 text-sm text-muted-foreground">
                   Voice assistant for orders & support
                 </p>

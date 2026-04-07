@@ -1,6 +1,6 @@
 import type { GeminiErrorCode } from "@/lib/gemini-errors";
 
-export const GEMINI_API_KEY_STORAGE_KEY = "shopping-assistant.gemini-api-key";
+export const GEMINI_API_KEY_STORAGE_KEY = "shoptalk.gemini-api-key";
 
 export const validateGeminiApiKey = (
   value: string,

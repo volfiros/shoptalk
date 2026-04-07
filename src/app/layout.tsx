@@ -8,7 +8,7 @@ const publicSans = Public_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Shop Talk",
+  title: "ShopTalk",
   description: "Voice-first support for orders, returns, and policy questions.",
 };
 

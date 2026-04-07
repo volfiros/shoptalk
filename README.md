@@ -1,13 +1,13 @@
-# Shop Talk
+# ShopTalk
 
-Shop Talk is a voice support app for e-commerce order and return questions.
+ShopTalk is a voice support app for e-commerce order and return questions.
 
 You speak to it, it listens, looks up the local order and policy data, and replies back with:
 - audio
 - text in the chat
 
 Demo video:
-- [Shop Talk demo](https://www.tella.tv/video/shop-talk-ai-voice-assistant-demo-1k3d)
+- [ShopTalk demo](https://www.tella.tv/video/shop-talk-ai-voice-assistant-demo-1k3d)
 
 ## What it does
 
