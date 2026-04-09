@@ -42,6 +42,7 @@ type SessionPayload = {
 type UseLiveSessionOptions = {
   apiKey: string | null;
   onMicFallback?: () => void;
+  isMuted?: boolean;
 };
 
 type MicrophoneDevice = {
@@ -167,9 +168,14 @@ const getMicrophoneErrorMessage = (error: unknown) => {
   }
 };
 
-export const useLiveSession = ({ apiKey, onMicFallback }: UseLiveSessionOptions) => {
+export const useLiveSession = ({ apiKey, onMicFallback, isMuted = false }: UseLiveSessionOptions) => {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [isChatActive, setIsChatActive] = useState(false);
+  const isMutedRef = useRef(isMuted);
+
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
   const [shouldConnect, setShouldConnect] = useState(false);
   const [isSessionReady, setIsSessionReady] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -212,6 +218,7 @@ export const useLiveSession = ({ apiKey, onMicFallback }: UseLiveSessionOptions)
   const pendingStartChatAllowDuringAssistantResponseRef = useRef(false);
   const pendingTextPromptRef = useRef<string | null>(null);
   const shouldStartListeningAfterAssistantTurnRef = useRef(false);
+  const shouldStartListeningAfterVoiceCompleteRef = useRef(false);
   const startListeningRef = useRef<((options?: { allowWhileAssistantResponding?: boolean }) => Promise<void>) | null>(null);
 
   const persistMicrophoneId = (deviceId: string) => {
@@ -443,6 +450,12 @@ export const useLiveSession = ({ apiKey, onMicFallback }: UseLiveSessionOptions)
     turnCompletePendingRef.current = false;
     clearActiveMessageRefs();
     audioInputModeRef.current = isChatActive ? "monitoring" : "inactive";
+
+    if (shouldStartListeningAfterVoiceCompleteRef.current) {
+      shouldStartListeningAfterVoiceCompleteRef.current = false;
+      void startListeningRef.current?.();
+      return;
+    }
 
     if (shouldCloseAfterAssistantTurnRef.current) {
       shouldCloseAfterAssistantTurnRef.current = false;
@@ -873,7 +886,7 @@ export const useLiveSession = ({ apiKey, onMicFallback }: UseLiveSessionOptions)
               if (message.serverContent?.generationComplete) {
                 finalizeDraftMessage("assistant");
 
-                if (shouldStartListeningAfterAssistantTurnRef.current) {
+                if (shouldStartListeningAfterAssistantTurnRef.current && !shouldStartListeningAfterVoiceCompleteRef.current) {
                   shouldStartListeningAfterAssistantTurnRef.current = false;
                   void startListeningRef.current?.({
                     allowWhileAssistantResponding: true
@@ -945,9 +958,11 @@ export const useLiveSession = ({ apiKey, onMicFallback }: UseLiveSessionOptions)
 
   const startListening = useCallback(async (options?: {
     allowWhileAssistantResponding?: boolean;
+    muted?: boolean;
   }) => {
     const allowWhileAssistantResponding =
       options?.allowWhileAssistantResponding ?? false;
+    const muted = options?.muted ?? isMutedRef.current;
 
     if (pendingStartChatRef.current) {
       logger.warn("Session start already pending, ignoring duplicate call");
@@ -964,6 +979,7 @@ export const useLiveSession = ({ apiKey, onMicFallback }: UseLiveSessionOptions)
       return;
     }
 
+    isMutedRef.current = muted;
     logger.info("Acquiring microphone");
 
     if (!sessionRef.current) {
@@ -1039,6 +1055,10 @@ export const useLiveSession = ({ apiKey, onMicFallback }: UseLiveSessionOptions)
 
       inputProcessorNode.onaudioprocess = (event) => {
         const activeSession = sessionRef.current;
+
+        if (isMutedRef.current) {
+          return;
+        }
 
         if (!activeSession || !isSessionWritable(activeSession)) {
           return;
@@ -1168,6 +1188,7 @@ export const useLiveSession = ({ apiKey, onMicFallback }: UseLiveSessionOptions)
     prompt: string,
     options?: {
       startListeningAfterAssistantReply?: boolean;
+      startListeningAfterVoiceComplete?: boolean;
     }
   ) => {
     const nextPrompt = prompt.trim();
@@ -1180,6 +1201,8 @@ export const useLiveSession = ({ apiKey, onMicFallback }: UseLiveSessionOptions)
     setErrorMessage(null);
     shouldStartListeningAfterAssistantTurnRef.current =
       options?.startListeningAfterAssistantReply ?? false;
+    shouldStartListeningAfterVoiceCompleteRef.current =
+      options?.startListeningAfterVoiceComplete ?? false;
 
     if (sessionRef.current && isSessionWritable(sessionRef.current)) {
       try {
@@ -1188,6 +1211,7 @@ export const useLiveSession = ({ apiKey, onMicFallback }: UseLiveSessionOptions)
       } catch (error) {
         logger.error("Prompt send failed (live session)", error);
         shouldStartListeningAfterAssistantTurnRef.current = false;
+        shouldStartListeningAfterVoiceCompleteRef.current = false;
         void shutdownLiveSession(
           error instanceof Error
             ? error.message
@@ -1260,6 +1284,7 @@ export const useLiveSession = ({ apiKey, onMicFallback }: UseLiveSessionOptions)
 
   return {
     errorMessage,
+    interruptAssistantTurn,
     isChatActive,
     messages,
     microphoneDevices,

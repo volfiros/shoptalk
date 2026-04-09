@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeft, ChevronDown, Mic, Mic2, Settings2 } from "lucide-react";
+import { ArrowLeft, ChevronDown, Mic, Mic2, MicOff, Settings2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,6 +59,8 @@ export const ChatScreen = () => {
   const [textDraft, setTextDraft] = useState("");
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [micMenuOpen, setMicMenuOpen] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [unmuteAfterFirstResponse, setUnmuteAfterFirstResponse] = useState(false);
   const micMenuRef = useRef<HTMLDivElement | null>(null);
   const micMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const { ready, value, setValue } = useSessionValue(GEMINI_API_KEY_STORAGE_KEY);
@@ -69,6 +71,7 @@ export const ChatScreen = () => {
   const {
     endConversation,
     errorMessage,
+    interruptAssistantTurn,
     isChatActive,
     isLoadingMicrophones,
     messages,
@@ -83,6 +86,7 @@ export const ChatScreen = () => {
     voiceState
   } = useLiveSession({
     apiKey: value,
+    isMuted,
     onMicFallback: () => {
       toast("Selected microphone is unavailable. Switched to the default input.", { variant: "info" });
       void refreshMicrophones();
@@ -106,10 +110,15 @@ export const ChatScreen = () => {
   }, [isSavingKey, value]);
 
   const handleEmptyPromptSelect = useCallback((prompt: string) => {
-    sendTextPrompt(prompt, {
-      startListeningAfterAssistantReply: true
-    });
-  }, [sendTextPrompt]);
+    setUnmuteAfterFirstResponse(true);
+    setIsMuted(true);
+    void (async () => {
+      await startListening({ muted: true });
+      sendTextPrompt(prompt, {
+        startListeningAfterVoiceComplete: true
+      });
+    })();
+  }, [startListening, sendTextPrompt]);
 
   const getMessageAnimationClassName = (messageId: string, role: "user" | "assistant") => {
     if (animatedMessageIdsRef.current.has(messageId)) {
@@ -121,11 +130,9 @@ export const ChatScreen = () => {
   };
 
 
-  const microphoneSelectionDisabled =
-    isChatActive ||
-    voiceState === "connecting" ||
-    voiceState === "listening" ||
-    voiceState === "assistant-responding";
+  const handleToggleMute = useCallback(() => {
+    setIsMuted((prev) => !prev);
+  }, []);
 
   const getStatusCopy = () => {
     switch (voiceState) {
@@ -193,8 +200,17 @@ export const ChatScreen = () => {
     }
 
     setTextDraft("");
+
+    if (voiceState === "assistant-responding") {
+      void (async () => {
+        await interruptAssistantTurn();
+        sendTextPrompt(trimmed, { startListeningAfterAssistantReply: true });
+      })();
+      return;
+    }
+
     sendTextPrompt(trimmed, { startListeningAfterAssistantReply: true });
-  }, [sendTextPrompt, textDraft]);
+  }, [sendTextPrompt, textDraft, voiceState, interruptAssistantTurn]);
 
   const handleBack = useCallback(() => {
     endConversation();
@@ -300,6 +316,17 @@ export const ChatScreen = () => {
     }
   }, [isChatActive, messages.length, toast, voiceState]);
 
+  useEffect(() => {
+    if (
+      unmuteAfterFirstResponse &&
+      voiceState === "idle" &&
+      messages.some((m) => m.role === "assistant")
+    ) {
+      setUnmuteAfterFirstResponse(false);
+      setIsMuted(false);
+    }
+  }, [unmuteAfterFirstResponse, voiceState, messages]);
+
   const saveApiKey = async () => {
     const nextKey = draftApiKey.trim();
 
@@ -404,6 +431,76 @@ export const ChatScreen = () => {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <div className="relative">
+            <button
+              ref={micMenuButtonRef}
+              type="button"
+              disabled={isLoadingMicrophones || microphoneDevices.length === 0}
+              onClick={() => setMicMenuOpen((prev) => !prev)}
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-border/50 bg-background/50 px-2.5 text-xs text-muted-foreground outline-none transition-colors hover:border-border hover:bg-background hover:text-foreground focus-visible:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label="Select microphone"
+              aria-expanded={micMenuOpen}
+              aria-haspopup="listbox"
+            >
+              {isMuted ? (
+                <MicOff className="h-3.5 w-3.5 shrink-0 text-destructive" />
+              ) : (
+                <Mic2 className="h-3.5 w-3.5 shrink-0" />
+              )}
+              <span className="hidden text-xs sm:inline">
+                {isLoadingMicrophones
+                  ? "Loading..."
+                  : microphoneDevices.find((d) => d.deviceId === selectedMicrophoneId)?.label ?? "Select mic"}
+              </span>
+              <ChevronDown
+                className={`h-3 w-3 shrink-0 transition-transform ${micMenuOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+            {micMenuOpen && typeof document !== "undefined"
+              ? createPortal(
+                  <div
+                    ref={micMenuRef}
+                    role="listbox"
+                    aria-label="Microphones"
+                    className="fixed z-50 max-h-60 min-w-48 overflow-y-auto rounded-xl border border-border/60 bg-surface p-1 shadow-xl backdrop-blur-xl dark:shadow-black/20 animate-fade-in"
+                    style={{
+                      left: Math.max(
+                        (micMenuButtonRef.current?.getBoundingClientRect().left ?? 0),
+                        0
+                      ),
+                      top:
+                        (micMenuButtonRef.current?.getBoundingClientRect().bottom ?? 0) + 2,
+                      width: "12rem"
+                    }}
+                  >
+                    {microphoneDevices.length === 0 ? (
+                      <div className="px-3 py-2 text-sm text-muted-foreground">No microphones found</div>
+                    ) : (
+                      microphoneDevices.map((device) => (
+                        <button
+                          key={device.deviceId}
+                          type="button"
+                          role="option"
+                          aria-selected={device.deviceId === selectedMicrophoneId}
+                          onClick={() => {
+                            updateSelectedMicrophoneId(device.deviceId);
+                            setMicMenuOpen(false);
+                          }}
+                          className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground"
+                        >
+                          <Mic2 className="h-4 w-4 shrink-0" />
+                          <span className="min-w-0 flex-1 truncate text-left">{device.label}</span>
+                          {device.deviceId === selectedMicrophoneId && (
+                            <Mic className="h-3.5 w-3.5 shrink-0 text-primary" />
+                          )}
+                        </button>
+                      ))
+                    )}
+                  </div>,
+                  document.body
+                )
+              : null}
+          </div>
           <ThemeToggle className="h-8 w-8" />
           <Button
             type="button"
@@ -528,73 +625,7 @@ export const ChatScreen = () => {
       </main>
 
       <footer className="z-20 border-t border-border/50 bg-surface/80 px-3 py-3 backdrop-blur-lg sm:px-4">
-        <div className="mx-auto flex max-w-2xl flex-wrap items-center gap-3">
-          <div className="relative shrink-0">
-            <button
-              ref={micMenuButtonRef}
-              type="button"
-              disabled={microphoneSelectionDisabled || isLoadingMicrophones || microphoneDevices.length === 0}
-              onClick={() => setMicMenuOpen((prev) => !prev)}
-              className="flex h-9 w-[12rem] shrink-0 items-center gap-2 rounded-lg border border-border/50 bg-background px-3 text-sm text-muted-foreground outline-none transition-colors hover:border-border hover:text-foreground focus-visible:border-primary disabled:cursor-not-allowed disabled:opacity-50"
-              aria-label="Select microphone"
-              aria-expanded={micMenuOpen}
-              aria-haspopup="listbox"
-            >
-              <Mic2 className="h-4 w-4 shrink-0" />
-              <span className="min-w-0 flex-1 truncate text-xs">
-                {isLoadingMicrophones
-                  ? "Loading..."
-                  : microphoneDevices.find((d) => d.deviceId === selectedMicrophoneId)?.label ?? "Select mic"}
-              </span>
-              <ChevronDown
-                className={`h-3.5 w-3.5 shrink-0 transition-transform ${micMenuOpen ? "rotate-180" : ""}`}
-              />
-            </button>
-            {micMenuOpen && typeof document !== "undefined"
-              ? createPortal(
-                  <div
-                    ref={micMenuRef}
-                    role="listbox"
-                    aria-label="Microphones"
-                    className="fixed z-50 max-h-60 min-w-48 overflow-y-auto rounded-xl border border-border/60 bg-surface p-1 shadow-xl backdrop-blur-xl dark:shadow-black/20 animate-fade-in"
-                    style={{
-                      left: Math.max(
-                        (micMenuButtonRef.current?.getBoundingClientRect().left ?? 0),
-                        0
-                      ),
-                      bottom:
-                        window.innerHeight - (micMenuButtonRef.current?.getBoundingClientRect().top ?? 0) + 2,
-                      width: "12rem"
-                    }}
-                  >
-                    {microphoneDevices.length === 0 ? (
-                      <div className="px-3 py-2 text-sm text-muted-foreground">No microphones found</div>
-                    ) : (
-                      microphoneDevices.map((device) => (
-                        <button
-                          key={device.deviceId}
-                          type="button"
-                          role="option"
-                          aria-selected={device.deviceId === selectedMicrophoneId}
-                          onClick={() => {
-                            updateSelectedMicrophoneId(device.deviceId);
-                            setMicMenuOpen(false);
-                          }}
-                          className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground"
-                        >
-                          <Mic2 className="h-4 w-4 shrink-0" />
-                          <span className="min-w-0 flex-1 truncate text-left">{device.label}</span>
-                          {device.deviceId === selectedMicrophoneId && (
-                            <Mic className="h-3.5 w-3.5 shrink-0 text-primary" />
-                          )}
-                        </button>
-                      ))
-                    )}
-                  </div>,
-                  document.body
-                )
-              : null}
-          </div>
+        <div className="mx-auto flex max-w-2xl items-center gap-2">
           <Input
             type="text"
             value={textDraft}
@@ -605,6 +636,19 @@ export const ChatScreen = () => {
             className="h-9 min-w-0 flex-1 rounded-lg border-border/50 bg-background text-sm"
             autoComplete="off"
           />
+          {isChatActive && (
+            <Button
+              type="button"
+              variant={isMuted ? "destructive" : "outline"}
+              size="icon-sm"
+              className="h-9 w-9 shrink-0"
+              aria-label={isMuted ? "Unmute microphone" : "Mute microphone"}
+              title={isMuted ? "Unmute microphone" : "Mute microphone"}
+              onClick={handleToggleMute}
+            >
+              {isMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+            </Button>
+          )}
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground sm:hidden">
             <VoiceIndicator state={voiceState} size="sm" />
             <span>{getMobileStatusLabel()}</span>
