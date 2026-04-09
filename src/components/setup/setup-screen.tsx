@@ -27,6 +27,10 @@ import {
 
 const ICON_BUTTON_CLASS_NAME = "h-10 w-10 rounded-xl";
 
+const STATUS_TEXT_READY = "Your API key is ready. Click Start voice chat to begin.";
+const STATUS_TEXT_LOADING = "Loading session state...";
+const STATUS_TEXT_HINT = "Setup stays in the browser session only.";
+
 export const SetupScreen = () => {
   const router = useRouter();
   const { toast } = useToast();
@@ -147,14 +151,20 @@ export const SetupScreen = () => {
     setError(null);
   };
 
+  const isKeyReady = ready && value && !draftKey;
+
   return (
     <AppShell>
       <div className="absolute right-4 top-4 sm:right-6 sm:top-6">
         <ThemeToggle />
       </div>
       <PageFrame
-        title="Add your Gemini key"
-        description="Use your Gemini API key to start a local voice support session and continue into the chat interface."
+        title={isKeyReady ? "API key ready" : "Add your Gemini key"}
+        description={
+          isKeyReady
+            ? "Your Gemini key is saved for this session. Start the voice chat when ready."
+            : "Use your Gemini API key to start a local voice support session and continue into the chat interface."
+        }
         headerClassName="mx-auto text-center"
       >
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
@@ -165,58 +175,69 @@ export const SetupScreen = () => {
             <form className="flex flex-col gap-5" onSubmit={handleSubmit}>
               <FieldGroup>
                 <Field data-invalid={Boolean(error)}>
-                  <FieldLabel htmlFor="gemini-api-key">Gemini API key</FieldLabel>
-                  <div className="flex items-center gap-2">
-                    <div className="relative w-full">
-                      <Input
-                        id="gemini-api-key"
-                        type="password"
-                        value={draftKey}
-                        onChange={(event) => handleDraftKeyChange(event.target.value)}
-                        aria-invalid={Boolean(error)}
-                        placeholder="Paste your Gemini API key"
-                        autoComplete="off"
-                        disabled={!ready || isSubmitting}
-                        className={draftKey ? "pr-10" : ""}
-                      />
-                      {draftKey ? (
-                        <button
-                          type="button"
-                          onClick={handleClearDraftKey}
-                          className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center justify-center text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                          aria-label="Clear typed key"
-                          title="Clear typed key"
-                          disabled={!ready || isSubmitting}
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      ) : null}
+                  <FieldLabel htmlFor="gemini-api-key">
+                    {isKeyReady ? "Status" : "Gemini API key"}
+                  </FieldLabel>
+                  {isKeyReady ? (
+                    <div className="flex items-center gap-3 rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-sm text-foreground">
+                      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-success/20">
+                        <span className="h-2 w-2 rounded-full bg-success" />
+                      </div>
+                      <span className="font-medium text-foreground">{STATUS_TEXT_READY}</span>
                     </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon-sm"
-                      className={ICON_BUTTON_CLASS_NAME}
-                      aria-label="Paste Gemini API key"
-                      title="Paste key"
-                      disabled={!ready || isSubmitting}
-                      onClick={handlePaste}
-                    >
-                      <Clipboard className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon-sm"
-                      className={ICON_BUTTON_CLASS_NAME}
-                      aria-label="Copy Gemini API key"
-                      title="Copy key"
-                      disabled={!ready || isSubmitting}
-                      onClick={handleCopy}
-                    >
-                      <Copy className="h-4 w-4" />
-                    </Button>
-                  </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <div className="relative w-full">
+                        <Input
+                          id="gemini-api-key"
+                          type="password"
+                          value={draftKey}
+                          onChange={(event) => handleDraftKeyChange(event.target.value)}
+                          aria-invalid={Boolean(error)}
+                          placeholder="Paste your Gemini API key"
+                          autoComplete="off"
+                          disabled={!ready || isSubmitting}
+                          className={draftKey ? "pr-10" : ""}
+                        />
+                        {draftKey ? (
+                          <button
+                            type="button"
+                            onClick={handleClearDraftKey}
+                            className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center justify-center text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                            aria-label="Clear typed key"
+                            title="Clear typed key"
+                            disabled={!ready || isSubmitting}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        ) : null}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon-sm"
+                        className={ICON_BUTTON_CLASS_NAME}
+                        aria-label="Paste Gemini API key"
+                        title="Paste key"
+                        disabled={!ready || isSubmitting}
+                        onClick={handlePaste}
+                      >
+                        <Clipboard className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon-sm"
+                        className={ICON_BUTTON_CLASS_NAME}
+                        aria-label="Copy Gemini API key"
+                        title="Copy key"
+                        disabled={!ready || isSubmitting}
+                        onClick={handleCopy}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
                   <FieldDescription>{helpText}</FieldDescription>
                   <FieldError>{error}</FieldError>
                 </Field>
@@ -226,9 +247,7 @@ export const SetupScreen = () => {
                 aria-live="polite"
                 className="flex items-center rounded-xl border border-border/60 bg-muted/45 px-5 py-4 text-sm text-muted-foreground shadow-inner"
               >
-                {ready
-                  ? "Setup stays in the browser session only."
-                  : "Loading session state..."}
+                {ready ? STATUS_TEXT_HINT : STATUS_TEXT_LOADING}
               </div>
 
               {draftKey.trim().length > 0 && !isSubmitting ? (
@@ -239,7 +258,7 @@ export const SetupScreen = () => {
 
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <Button type="submit" disabled={!ready || isSubmitting}>
-                  {isSubmitting ? "Opening chat..." : "Start voice chat"}
+                  {isSubmitting ? "Opening chat..." : isKeyReady ? "Open chat" : "Start voice chat"}
                 </Button>
                 <Button
                   type="button"
