@@ -73,6 +73,7 @@ export const ChatScreen = () => {
     isLoadingMicrophones,
     messages,
     microphoneDevices,
+    refreshMicrophones,
     retryConnection,
     selectedMicrophoneId,
     sendTextPrompt,
@@ -80,7 +81,13 @@ export const ChatScreen = () => {
     startListening,
     updateSelectedMicrophoneId,
     voiceState
-  } = useLiveSession({ apiKey: value });
+  } = useLiveSession({
+    apiKey: value,
+    onMicFallback: () => {
+      toast("Selected microphone is unavailable. Switched to the default input.", { variant: "info" });
+      void refreshMicrophones();
+    }
+  });
 
   const openSettings = useCallback(() => {
     setDraftApiKey(value ?? "");

@@ -41,6 +41,7 @@ type SessionPayload = {
 
 type UseLiveSessionOptions = {
   apiKey: string | null;
+  onMicFallback?: () => void;
 };
 
 type MicrophoneDevice = {
@@ -166,7 +167,7 @@ const getMicrophoneErrorMessage = (error: unknown) => {
   }
 };
 
-export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
+export const useLiveSession = ({ apiKey, onMicFallback }: UseLiveSessionOptions) => {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [isChatActive, setIsChatActive] = useState(false);
   const [shouldConnect, setShouldConnect] = useState(false);
@@ -988,10 +989,15 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
         });
       } catch (error) {
         if (selectedMicrophoneId && selectedMicrophoneId !== "default") {
+          logger.warn("Mic acquisition failed, falling back to default", { deviceId: selectedMicrophoneId, error });
           mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          setErrorMessage("Selected microphone was unavailable. Switched to the default input.");
+          setErrorMessage(null);
           setSelectedMicrophoneId("default");
           persistMicrophoneId("default");
+          void refreshMicrophones();
+          if (onMicFallback) {
+            onMicFallback();
+          }
         } else {
           throw error;
         }
@@ -1147,6 +1153,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
   }, [
     isChatActive,
     interruptAssistantTurn,
+    onMicFallback,
     refreshMicrophones,
     selectedMicrophoneId,
     shutdownLiveSession,
@@ -1258,6 +1265,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     microphoneDevices,
     isLoadingMicrophones,
     endConversation,
+    refreshMicrophones,
     retryConnection,
     selectedMicrophoneId,
     sessionInfo,
