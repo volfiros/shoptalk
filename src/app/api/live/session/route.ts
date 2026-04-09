@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
-import { normalizeGeminiError } from "@/lib/gemini-errors";
+import { getGeminiErrorDebugDetails, normalizeGeminiError } from "@/lib/gemini-errors";
 import { LIVE_MODEL, LIVE_SESSION_CONFIG, LIVE_VOICE } from "@/lib/live/config";
 
 type SessionBody = {
@@ -23,6 +23,14 @@ const buildClient = (apiKey: string) => {
 };
 
 export const POST = async (request: Request) => {
+  console.info("[api:session]", "Session token requested");
+
+  const contentType = request.headers.get("content-type");
+
+  if (!contentType?.includes("application/json")) {
+    return NextResponse.json({ error: "invalid_content_type" }, { status: 415 });
+  }
+
   let body: SessionBody;
 
   try {
@@ -52,12 +60,15 @@ export const POST = async (request: Request) => {
       }
     });
 
+    console.info("[api:session]", "Token created successfully");
+
     return NextResponse.json({
       token: token.name,
       model: LIVE_MODEL,
       voice: LIVE_VOICE
     });
   } catch (error) {
+    console.error("[api:session]", "Token creation failed", getGeminiErrorDebugDetails(error));
     const normalizedError = normalizeGeminiError(error);
 
     return NextResponse.json(

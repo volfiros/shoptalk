@@ -32,6 +32,12 @@ const hasStringArg = (
 };
 
 export const POST = async (request: Request) => {
+  const contentType = request.headers.get("content-type");
+
+  if (!contentType?.includes("application/json")) {
+    return NextResponse.json({ error: "invalid_content_type" }, { status: 415 });
+  }
+
   let body: ToolRequestBody;
 
   try {
@@ -46,6 +52,12 @@ export const POST = async (request: Request) => {
 
   const args = body.args ?? {};
 
+  if (typeof args !== "object" || args === null || Array.isArray(args)) {
+    return NextResponse.json({ error: "invalid_args" }, { status: 400 });
+  }
+
+  console.info("[api:tool]", body.toolName, JSON.stringify(args));
+
   try {
     switch (body.toolName) {
       case "list_recent_orders": {
@@ -54,6 +66,7 @@ export const POST = async (request: Request) => {
             ? args.userId
             : undefined;
 
+        console.info("[api:tool]", "list_recent_orders", "success");
         return NextResponse.json({
           result: listRecentOrders(userId)
         });
@@ -69,6 +82,7 @@ export const POST = async (request: Request) => {
           return NextResponse.json({ error: "not_found" }, { status: 404 });
         }
 
+        console.info("[api:tool]", "get_order_details", "success");
         return NextResponse.json({ result: order });
       }
       case "check_return_eligibility": {
@@ -82,6 +96,7 @@ export const POST = async (request: Request) => {
           return NextResponse.json({ error: "not_found" }, { status: 404 });
         }
 
+        console.info("[api:tool]", "check_return_eligibility", "success");
         return NextResponse.json({ result });
       }
       case "get_policy": {
@@ -95,6 +110,7 @@ export const POST = async (request: Request) => {
           return NextResponse.json({ error: "not_found" }, { status: 404 });
         }
 
+        console.info("[api:tool]", "get_policy", "success");
         return NextResponse.json({ result });
       }
       default: {
@@ -103,7 +119,8 @@ export const POST = async (request: Request) => {
         });
       }
     }
-  } catch {
+  } catch (error) {
+    console.error("[api:tool]", body.toolName, error);
     return NextResponse.json({ error: "tool_failed" }, { status: 500 });
   }
 };

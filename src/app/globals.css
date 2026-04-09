@@ -263,6 +263,17 @@
   }
 }
 
+@keyframes toast-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
 @keyframes theme-rotate {
   from {
     transform: rotate(0deg) scale(1);
@@ -322,6 +333,10 @@
 
 .animate-ripple {
   animation: ripple 1.2s ease-out infinite;
+}
+
+.animate-toast-exit {
+  animation: toast-exit 0.3s ease-out forwards;
 }
 
 .animate-theme-rotate {

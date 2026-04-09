@@ -16,6 +16,7 @@ import {
   FieldLabel
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { useToast } from "@/components/ui/toast";
 import { useSessionValue } from "@/hooks/use-session-value";
 import {
   GEMINI_API_KEY_STORAGE_KEY,
@@ -28,11 +29,11 @@ const ICON_BUTTON_CLASS_NAME = "h-10 w-10 rounded-xl";
 
 export const SetupScreen = () => {
   const router = useRouter();
+  const { toast } = useToast();
   const { ready, value, setValue } = useSessionValue(GEMINI_API_KEY_STORAGE_KEY);
   const [draftKey, setDraftKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [clipboardMessage, setClipboardMessage] = useState<string | null>(null);
 
   const helpText = useMemo(() => {
     if (!ready) {
@@ -61,13 +62,17 @@ export const SetupScreen = () => {
     setIsSubmitting(true);
 
     void (async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10_000);
+
       try {
         const response = await fetch("/api/live/validate", {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
           },
-          body: JSON.stringify({ apiKey: nextKey })
+          body: JSON.stringify({ apiKey: nextKey }),
+          signal: controller.signal
         });
 
         if (!response.ok) {
@@ -82,9 +87,13 @@ export const SetupScreen = () => {
         });
       } catch (submissionError) {
         setError(
-          getGeminiClientErrorMessage(submissionError)
+          submissionError instanceof DOMException && submissionError.name === "AbortError"
+            ? "Request timed out. Please try again."
+            : getGeminiClientErrorMessage(submissionError)
         );
         setIsSubmitting(false);
+      } finally {
+        clearTimeout(timeoutId);
       }
     })();
   };
@@ -92,7 +101,6 @@ export const SetupScreen = () => {
   const handleClear = () => {
     setDraftKey("");
     setError(null);
-    setClipboardMessage(null);
     setValue(null);
   };
 
@@ -101,15 +109,15 @@ export const SetupScreen = () => {
       const pastedValue = await navigator.clipboard.readText();
 
       if (!pastedValue.trim()) {
-        setClipboardMessage("Clipboard is empty.");
+        toast("Clipboard is empty.");
         return;
       }
 
       setDraftKey(pastedValue);
       setError(null);
-      setClipboardMessage("Key pasted from clipboard.");
+      toast("Key pasted from clipboard.");
     } catch {
-      setClipboardMessage("Clipboard paste is not available here.");
+      toast("Clipboard paste is not available here.");
     }
   };
 
@@ -117,15 +125,15 @@ export const SetupScreen = () => {
     const nextValue = (draftKey || value || "").trim();
 
     if (!nextValue) {
-      setClipboardMessage("There is no key to copy.");
+      toast("There is no key to copy.");
       return;
     }
 
     try {
       await navigator.clipboard.writeText(nextValue);
-      setClipboardMessage("Key copied to clipboard.");
+      toast("Key copied to clipboard.");
     } catch {
-      setClipboardMessage("Clipboard copy is not available here.");
+      toast("Clipboard copy is not available here.");
     }
   };
 
@@ -223,9 +231,9 @@ export const SetupScreen = () => {
                   : "Loading session state..."}
               </div>
 
-              {clipboardMessage ? (
-                <p aria-live="polite" className="text-sm text-muted-foreground">
-                  {clipboardMessage}
+              {draftKey.trim().length > 0 && !isSubmitting ? (
+                <p className="text-xs text-muted-foreground">
+                  Press Enter to start the voice chat.
                 </p>
               ) : null}
 

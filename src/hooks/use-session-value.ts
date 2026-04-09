@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createLogger } from "@/lib/logger";
+
+const logger = createLogger("session-value");
 
 export const useSessionValue = (key: string) => {
   const [value, setCurrentValue] = useState<string | null>(null);
@@ -10,6 +13,9 @@ export const useSessionValue = (key: string) => {
     try {
       const storedValue = window.sessionStorage.getItem(key);
       setCurrentValue(storedValue);
+    } catch (error) {
+      logger.warn("sessionStorage read failed", error);
+      setCurrentValue(null);
     } finally {
       setReady(true);
     }
@@ -20,14 +26,19 @@ export const useSessionValue = (key: string) => {
       return;
     }
 
-    if (nextValue === null) {
-      window.sessionStorage.removeItem(key);
-      setCurrentValue(null);
-      return;
-    }
+    try {
+      if (nextValue === null) {
+        window.sessionStorage.removeItem(key);
+        setCurrentValue(null);
+        return;
+      }
 
-    window.sessionStorage.setItem(key, nextValue);
-    setCurrentValue(nextValue);
+      window.sessionStorage.setItem(key, nextValue);
+      setCurrentValue(nextValue);
+    } catch (error) {
+      logger.warn("sessionStorage write failed", error);
+      setCurrentValue(nextValue);
+    }
   };
 
   return {

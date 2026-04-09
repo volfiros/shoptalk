@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Mic, Settings2 } from "lucide-react";
+import { ArrowLeft, ChevronDown, Mic, Settings2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { PageFrame } from "@/components/layout/page-frame";
@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { LoadingDots } from "@/components/ui/loading-dots";
 import { SkeletonPanel, SkeletonMessage } from "@/components/ui/skeleton";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { useToast } from "@/components/ui/toast";
 import { VoiceIndicator } from "@/components/ui/voice-indicator";
 import { useLiveSession } from "@/hooks/use-live-session";
 import { useSessionValue } from "@/hooks/use-session-value";
@@ -51,9 +52,13 @@ const EmptyPromptButton = ({
 
 export const ChatScreen = () => {
   const router = useRouter();
+  const { toast } = useToast();
   const transcriptViewportRef = useRef<HTMLDivElement | null>(null);
   const settingsPanelRef = useRef<HTMLDivElement | null>(null);
   const animatedMessageIdsRef = useRef<Set<string>>(new Set());
+  const idleHintShownRef = useRef(false);
+  const [textDraft, setTextDraft] = useState("");
+  const [showScrollButton, setShowScrollButton] = useState(false);
   const { ready, value, setValue } = useSessionValue(GEMINI_API_KEY_STORAGE_KEY);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [draftApiKey, setDraftApiKey] = useState("");
@@ -133,6 +138,60 @@ export const ChatScreen = () => {
     }
   };
 
+  const getMobileStatusLabel = () => {
+    switch (voiceState) {
+      case "connecting":
+        return "Connecting";
+      case "listening":
+        return "Listening";
+      case "assistant-responding":
+        return "Responding";
+      case "error":
+        return "Error";
+      default:
+        return isChatActive ? "Ready" : "Idle";
+    }
+  };
+
+  const handleTranscriptScroll = useCallback(() => {
+    const viewport = transcriptViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+    const { scrollHeight, scrollTop, clientHeight } = viewport;
+    setShowScrollButton(scrollHeight - scrollTop - clientHeight > 100);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    const viewport = transcriptViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+    viewport.scrollTo({
+      top: viewport.scrollHeight,
+      behavior: "smooth"
+    });
+  }, []);
+
+  const handleTextInput = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+
+    const trimmed = textDraft.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    setTextDraft("");
+    sendTextPrompt(trimmed, { startListeningAfterAssistantReply: true });
+  }, [sendTextPrompt, textDraft]);
+
+  const handleBack = useCallback(() => {
+    endConversation();
+    router.push("/");
+  }, [endConversation, router]);
+
   useEffect(() => {
     if (ready && !value) {
       router.replace("/");
@@ -178,6 +237,31 @@ export const ChatScreen = () => {
     };
   }, [closeSettings, isSettingsOpen]);
 
+  useEffect(() => {
+    if (errorMessage) {
+      toast(errorMessage, {
+        variant: "error",
+        action: { label: "Reset session", onClick: retryConnection }
+      });
+    }
+  }, [errorMessage, retryConnection, toast]);
+
+  useEffect(() => {
+    if (
+      !idleHintShownRef.current &&
+      voiceState === "idle" &&
+      messages.length === 0 &&
+      isChatActive
+    ) {
+      const timer = setTimeout(() => {
+        idleHintShownRef.current = true;
+        toast("Tap Start or type a message to begin.");
+      }, 30_000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [isChatActive, messages.length, toast, voiceState]);
+
   const saveApiKey = async () => {
     const nextKey = draftApiKey.trim();
 
@@ -194,13 +278,17 @@ export const ChatScreen = () => {
     setIsSavingKey(true);
     setSettingsError(null);
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10_000);
+
     try {
       const response = await fetch("/api/live/validate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ apiKey: nextKey })
+        body: JSON.stringify({ apiKey: nextKey }),
+        signal: controller.signal
       });
 
       if (!response.ok) {
@@ -212,9 +300,12 @@ export const ChatScreen = () => {
       setIsSettingsOpen(false);
     } catch (saveError) {
       setSettingsError(
-        getGeminiClientErrorMessage(saveError)
+        saveError instanceof DOMException && saveError.name === "AbortError"
+          ? "Request timed out. Please try again."
+          : getGeminiClientErrorMessage(saveError)
       );
     } finally {
+      clearTimeout(timeoutId);
       setIsSavingKey(false);
     }
   };
@@ -239,6 +330,17 @@ export const ChatScreen = () => {
         className="relative z-20 flex items-center justify-between border-b border-border/50 bg-surface/80 px-3 py-2 backdrop-blur-lg sm:px-4"
       >
         <div className="flex items-center gap-3">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="h-8 w-8"
+            aria-label="Back to setup"
+            title="Back"
+            onClick={handleBack}
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
           <VoiceIndicator state={voiceState} size="sm" />
           <div className="text-sm">
             <span className="font-medium capitalize text-foreground">{voiceState.replace("-", " ")}</span>
@@ -292,19 +394,11 @@ export const ChatScreen = () => {
         ) : null}
       </header>
 
-      {errorMessage ? (
-        <div className="flex items-center justify-between gap-3 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-sm">
-          <p className="text-foreground">{errorMessage}</p>
-          <Button variant="outline" size="xs" onClick={retryConnection}>
-            Reset session
-          </Button>
-        </div>
-      ) : null}
-
       <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
         <div
           ref={transcriptViewportRef}
           className="flex-1 overflow-y-auto px-3 py-4 sm:px-6"
+          onScroll={handleTranscriptScroll}
         >
           {voiceState === "connecting" && messages.length === 0 ? (
             <div className="mx-auto flex max-w-2xl flex-col gap-3">
@@ -328,6 +422,11 @@ export const ChatScreen = () => {
                     }`}
                   >
                     <p className="whitespace-pre-wrap">{message.body}</p>
+                    {message.isDraft ? (
+                      <div className="mt-1.5 text-xs text-muted-foreground">
+                        <LoadingDots size="sm" />
+                      </div>
+                    ) : null}
                     {message.role === "assistant" && message.wasInterrupted ? (
                       <p className="mt-1.5 text-xs text-muted-foreground">Interrupted</p>
                     ) : null}
@@ -359,6 +458,19 @@ export const ChatScreen = () => {
             </div>
           )}
         </div>
+        {showScrollButton ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon-xs"
+            className="absolute bottom-4 right-3 z-10 rounded-full shadow-lg sm:right-6"
+            aria-label="Scroll to bottom"
+            title="Scroll to bottom"
+            onClick={scrollToBottom}
+          >
+            <ChevronDown className="h-4 w-4" />
+          </Button>
+        ) : null}
       </main>
 
       <footer className="z-20 border-t border-border/50 bg-surface/80 px-3 py-3 backdrop-blur-lg sm:px-4">
@@ -380,6 +492,20 @@ export const ChatScreen = () => {
               ))
             )}
           </select>
+          <Input
+            type="text"
+            value={textDraft}
+            onChange={(event) => setTextDraft(event.target.value)}
+            onKeyDown={handleTextInput}
+            placeholder="Type a message..."
+            disabled={voiceState === "connecting"}
+            className="h-9 rounded-lg border-border/50 bg-background text-sm"
+            autoComplete="off"
+          />
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground sm:hidden">
+            <VoiceIndicator state={voiceState} size="sm" />
+            <span>{getMobileStatusLabel()}</span>
+          </div>
           <div className="hidden text-xs text-muted-foreground sm:block">{getStatusCopy()}</div>
           {isChatActive ? (
             <Button variant="outline" size="sm" onClick={endConversation}>

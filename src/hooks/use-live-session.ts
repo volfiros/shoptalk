@@ -2,6 +2,7 @@
 
 import { GoogleGenAI, type LiveServerMessage } from "@google/genai";
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { createLogger } from "@/lib/logger";
 import {
   LIVE_MODEL,
   LIVE_SESSION_CONFIG,
@@ -73,6 +74,8 @@ const createId = () => {
 const MICROPHONE_STORAGE_KEY = "shoptalk-microphone-id";
 const INTERRUPTION_SAMPLE_THRESHOLD = 0.018;
 const USER_TURN_SILENCE_MS = 1400;
+
+const logger = createLogger("live-session");
 
 const decodeBase64ToBytes = (base64: string) => {
   const binary = window.atob(base64);
@@ -244,6 +247,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       }));
 
       setMicrophoneDevices(nextDevices);
+      logger.info("Microphones refreshed", { count: nextDevices.length });
       setSelectedMicrophoneId((currentValue) => {
         const storedValue =
           currentValue ||
@@ -505,6 +509,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     isInterruptingAssistantRef.current = true;
     shouldIgnoreCurrentTurnRef.current = true;
     turnCompletePendingRef.current = false;
+    logger.info("Interrupting assistant turn");
     markAssistantMessageInterrupted();
     audioInputModeRef.current = "sending";
     lastSpeechAtRef.current = performance.now();
@@ -548,6 +553,11 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       setIsSessionReady(false);
 
       await closeAudioInput();
+
+      logger.info("Shutting down session", {
+        reason: nextErrorMessage ?? "user-initiated",
+        wasOpen: sessionIsOpenRef.current
+      });
 
       const session = sessionRef.current;
       sessionRef.current = null;
@@ -648,6 +658,8 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     const functionCalls = toolCall.functionCalls ?? [];
     const session = sessionRef.current;
 
+    logger.info("Tool calls received", { count: functionCalls.length, names: functionCalls.map((fc) => fc.name) });
+
     if (!functionCalls.length || !session || !isSessionWritable(session)) {
       return;
     }
@@ -696,7 +708,8 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
                   error: payload.error ?? "tool_failed"
                 }
           };
-        } catch {
+        } catch (toolError) {
+          logger.error("Tool request failed", { name: functionCall.name, error: toolError });
           return {
             id: functionCall.id,
             name: functionCall.name,
@@ -718,6 +731,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
         functionResponses
       });
     } catch (error) {
+      logger.error("Tool response send failed", error);
       void shutdownLiveSession(
         error instanceof Error
           ? error.message
@@ -740,6 +754,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     let cancelled = false;
 
     const connect = async () => {
+      logger.info("Connecting to live session");
       setVoiceState("connecting");
       setErrorMessage(null);
 
@@ -775,6 +790,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
           callbacks: {
             onopen: () => {
               if (!cancelled) {
+                logger.info("Session opened");
                 sessionIsOpenRef.current = true;
                 setVoiceState("idle");
               }
@@ -794,6 +810,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
               }
 
               if (message.setupComplete) {
+                logger.info("Setup complete", { sessionId: message.setupComplete.sessionId });
                 setIsSessionReady(true);
                 setSessionInfo({
                   sessionId: message.setupComplete.sessionId ?? null,
@@ -814,6 +831,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
                 finalizeDraftMessage("user");
                 setVoiceState("assistant-responding");
                 void queueAssistantAudio(message.data).catch((error) => {
+                  logger.error("Audio playback failed", error);
                   void shutdownLiveSession(
                     error instanceof Error
                       ? error.message
@@ -870,13 +888,15 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
                 finishAssistantTurn();
               }
             },
-            onerror: () => {
+            onerror: (error: unknown) => {
               if (!cancelled) {
+                logger.error("Live session WebSocket error", error);
                 void shutdownLiveSession("The live session hit an error.");
               }
             },
-            onclose: () => {
+            onclose: (event: unknown) => {
               if (!cancelled) {
+                logger.warn("Session closed", event);
                 sessionIsOpenRef.current = false;
                 void shutdownLiveSession("The live session closed.", {
                   skipSessionClose: true
@@ -894,8 +914,17 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
         sessionRef.current = session;
         sessionIsOpenRef.current = true;
         shouldSendAudioStreamEndRef.current = true;
+
+        const readyState = (session as unknown as LiveSessionConnectionState).conn?.ws?.readyState;
+        if (typeof readyState === "number" && readyState !== WebSocket.OPEN) {
+          logger.warn("Session created but WebSocket not in OPEN state", { readyState });
+          sessionIsOpenRef.current = false;
+        }
+
+        logger.info("Session connected successfully");
       } catch (error) {
         if (!cancelled) {
+          logger.error("Connection failed", error);
           void shutdownLiveSession(getGeminiClientErrorMessage(error));
         }
       }
@@ -921,6 +950,11 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     const allowWhileAssistantResponding =
       options?.allowWhileAssistantResponding ?? false;
 
+    if (pendingStartChatRef.current) {
+      logger.warn("Session start already pending, ignoring duplicate call");
+      return;
+    }
+
     if (
       isChatActive ||
       (
@@ -930,6 +964,8 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     ) {
       return;
     }
+
+    logger.info("Acquiring microphone");
 
     if (!sessionRef.current) {
       pendingStartChatRef.current = true;
@@ -991,6 +1027,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       inputSilenceNodeRef.current = inputSilenceNode;
       setIsChatActive(true);
       setErrorMessage(null);
+      logger.info("Audio processor started, chat active");
 
       if (!(allowWhileAssistantResponding && currentVoiceStateRef.current === "assistant-responding")) {
         setVoiceState("idle");
@@ -1060,6 +1097,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
                   });
                   setVoiceState("idle");
                 } catch (error) {
+                  logger.error("Audio stream end failed", error);
                   void shutdownLiveSession(
                     error instanceof Error
                       ? error.message
@@ -1085,6 +1123,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
             }
           });
         } catch (error) {
+          logger.error("Audio processing error", error);
           void shutdownLiveSession(
             error instanceof Error
               ? error.message
@@ -1101,6 +1140,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
         void inputAudioContext.resume();
       }
     } catch (error) {
+      logger.error("Microphone acquisition failed", error);
       setIsChatActive(false);
       void shutdownLiveSession(
         getMicrophoneErrorMessage(error)
@@ -1139,6 +1179,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
         dispatchTextPrompt(sessionRef.current, nextPrompt);
         return;
       } catch (error) {
+        logger.error("Prompt send failed (live session)", error);
         shouldStartListeningAfterAssistantTurnRef.current = false;
         void shutdownLiveSession(
           error instanceof Error
@@ -1191,6 +1232,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       try {
         dispatchTextPrompt(sessionRef.current, nextPrompt);
       } catch (error) {
+        logger.error("Prompt send failed (pending)", error);
         void shutdownLiveSession(
           error instanceof Error
             ? error.message

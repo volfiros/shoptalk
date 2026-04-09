@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
-import { normalizeGeminiError } from "@/lib/gemini-errors";
+import { getGeminiErrorDebugDetails, normalizeGeminiError } from "@/lib/gemini-errors";
 
 type ValidateBody = {
   apiKey?: string;
@@ -22,6 +22,14 @@ const buildClient = (apiKey: string) => {
 };
 
 export const POST = async (request: Request) => {
+  console.info("[api:validate]", "Key validation requested");
+
+  const contentType = request.headers.get("content-type");
+
+  if (!contentType?.includes("application/json")) {
+    return NextResponse.json({ ok: false, error: "invalid_content_type" }, { status: 415 });
+  }
+
   let body: ValidateBody;
 
   try {
@@ -50,6 +58,7 @@ export const POST = async (request: Request) => {
 
     return NextResponse.json({ ok: true });
   } catch (error) {
+    console.error("[api:validate]", "Validation failed", getGeminiErrorDebugDetails(error));
     const normalizedError = normalizeGeminiError(error);
 
     return NextResponse.json(
