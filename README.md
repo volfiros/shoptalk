@@ -9,6 +9,8 @@ You can interact with it through voice or text, and it listens, looks up the loc
 Demo video:
 - [ShopTalk demo](https://www.tella.tv/video/shop-talk-ai-voice-assistant-demo-1k3d)
 
+Note: This demo showcases the first working version of ShopTalk. Many changes have been made since it was recorded, including UI improvements and additional features.
+
 ## What it does
 
 You can ask things like:
