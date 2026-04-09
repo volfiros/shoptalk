@@ -48,7 +48,7 @@ type ButtonProps = ButtonPrimitive.Props &
     loading?: boolean
   }
 
-function Button({
+const Button = ({
   className,
   variant = "default",
   size = "default",
@@ -56,7 +56,7 @@ function Button({
   disabled,
   children,
   ...props
-}: ButtonProps) {
+}: ButtonProps) => {
   const isDisabled = disabled || loading
 
   return (
