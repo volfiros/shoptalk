@@ -304,17 +304,15 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
     ]);
   }, []);
 
-  const dispatchTextPrompt = useCallback((
+  const sendPromptToSession = useCallback((
     session: NonNullable<typeof sessionRef.current>,
     prompt: string
   ) => {
-    appendMessage("user", prompt);
-    setErrorMessage(null);
     setVoiceState("assistant-responding");
     session.sendRealtimeInput({
       text: prompt
     });
-  }, [appendMessage]);
+  }, []);
 
   const mergeTranscriptText = (currentText: string, nextText: string) => {
     if (!currentText) {
@@ -1171,12 +1169,14 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
       return;
     }
 
+    appendMessage("user", nextPrompt);
+    setErrorMessage(null);
     shouldStartListeningAfterAssistantTurnRef.current =
       options?.startListeningAfterAssistantReply ?? false;
 
     if (sessionRef.current && isSessionWritable(sessionRef.current)) {
       try {
-        dispatchTextPrompt(sessionRef.current, nextPrompt);
+        sendPromptToSession(sessionRef.current, nextPrompt);
         return;
       } catch (error) {
         logger.error("Prompt send failed (live session)", error);
@@ -1192,7 +1192,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
 
     pendingTextPromptRef.current = nextPrompt;
     setShouldConnect(true);
-  }, [dispatchTextPrompt, shutdownLiveSession]);
+  }, [appendMessage, sendPromptToSession, shutdownLiveSession]);
 
   useEffect(() => {
     const allowWhileAssistantResponding =
@@ -1230,7 +1230,7 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
 
     if (nextPrompt) {
       try {
-        dispatchTextPrompt(sessionRef.current, nextPrompt);
+        sendPromptToSession(sessionRef.current, nextPrompt);
       } catch (error) {
         logger.error("Prompt send failed (pending)", error);
         void shutdownLiveSession(
@@ -1240,16 +1240,16 @@ export const useLiveSession = ({ apiKey }: UseLiveSessionOptions) => {
         );
       }
     }
-  }, [dispatchTextPrompt, isSessionReady, shutdownLiveSession, voiceState]);
+  }, [isSessionReady, sendPromptToSession, shutdownLiveSession, voiceState]);
 
   const updateSelectedMicrophoneId = (deviceId: string) => {
     setSelectedMicrophoneId(deviceId);
     persistMicrophoneId(deviceId);
   };
 
-  const retryConnection = () => {
+  const retryConnection = useCallback(() => {
     window.location.reload();
-  };
+  }, []);
 
   return {
     errorMessage,
