@@ -41,6 +41,7 @@ yarn-error.log*
 next-env.d.ts
 
 # agent instructions
+.pi/
 AGENTS.md
 CLAUDE.md
 GEMINI.md
